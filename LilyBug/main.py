@@ -1,0 +1,516 @@
+import sys
+sys.path.append('..')
+from secret_bot import TOKEN
+import discord
+from discord.ext import commands
+import re
+import aiohttp
+import io
+from datetime import datetime, timedelta
+# import motor.motor_asyncio
+
+# --- CONFIGURATION ---
+
+config = {
+    "friend_user_id": 1381981009146544231,
+
+    # --- BLOCK LISTS (Ignore these) ---
+    # Add IDs of channels you want the bot to IGNORE here:
+    "blocked_channel_ids": [
+        1441608109893091422,
+        1441945844340359348 # Example: Put channel IDs here to ignore them
+    ],
+
+    # --- PRIVATE SERVER IDs ---
+    "private_sfw_channel": 1453048136435236966,
+    "private_nsfw_channel": 1453048155561000991,
+
+    # --- MAIN SERVER IDs ---
+    "main_sfw_ids": [
+        1451264568084009050, 1433927809356664893, 1433927043078295737, 
+        1433926375454277663, 1433923809488015482, 
+        1432898418644357162 
+    ],
+
+    "main_nsfw_ids": [
+        1434627845392695429, 1444294562159005776, 1441588870297813133, 
+        1441603802905055242, 1441602427265613988, 1441603192734482504, 
+        1441624360271220886, 1441604257328529558,
+        1433930334730326137 
+    ],
+    
+    # Defaults
+    "default_sfw_target": 1432898418644357162,
+    "default_nsfw_target": 1433930334730326137
+}
+
+# --- BOT SETUP ---
+intents = discord.Intents.default()
+intents.message_content = True
+intents.reactions = True 
+bot = commands.Bot(command_prefix="$", intents=intents)
+
+# --- DATABASE CONNECTION ---
+# --- DATABASE CONNECTION (LOCAL FILE VERSION) ---
+import json
+import os
+
+DB_FILE = "database.json"
+
+class AsyncIterator:
+    def __init__(self, items):
+        self.items = items
+    def __aiter__(self):
+        self.idx = 0
+        return self
+    async def __anext__(self):
+        if self.idx >= len(self.items): raise StopAsyncIteration
+        item = self.items[self.idx]
+        self.idx += 1
+        return item
+
+class LocalCollection:
+    def __init__(self, name):
+        self.name = name
+
+    def _load_all(self):
+        try:
+            with open(DB_FILE, "r") as f:
+                return json.load(f)
+        except: return {}
+
+    def _save_all(self, data):
+        with open(DB_FILE, "w") as f:
+            json.dump(data, f, indent=4, default=str)
+
+    async def find_one(self, query):
+        all_data = self._load_all()
+        collection = all_data.get(self.name, [])
+        for doc in collection:
+            if all(doc.get(k) == v for k, v in query.items()):
+                return doc
+        return None
+
+    def find(self, query={}):
+        all_data = self._load_all()
+        collection = all_data.get(self.name, [])
+        results = [doc for doc in collection if all(doc.get(k) == v for k, v in query.items())]
+        return AsyncIterator(results)
+
+    async def insert_one(self, doc):
+        all_data = self._load_all()
+        if self.name not in all_data: all_data[self.name] = []
+        all_data[self.name].append(doc)
+        self._save_all(all_data)
+
+    async def delete_one(self, query):
+        all_data = self._load_all()
+        collection = all_data.get(self.name, [])
+        new_collection = [doc for doc in collection if not all(doc.get(k) == v for k, v in query.items())]
+        all_data[self.name] = new_collection
+        self._save_all(all_data)
+        
+    async def replace_one(self, query, doc, upsert=False):
+        await self.delete_one(query)
+        await self.insert_one(doc)
+
+# --- REPLACED CONNECTION ---
+# cluster = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URL)
+# db = cluster["lilybot_db"]
+reply_map_col = LocalCollection("reply_map")
+mirror_map_col = LocalCollection("mirror_map")
+state_col = LocalCollection("active_state")
+
+# --- TRACKING STATE (Memory) ---
+last_friend_message_time = datetime.min
+
+# --- HELPER: FORMAT MESSAGE FOR PRIVATE CHANNEL ---
+def format_mirror_content(message, content):
+    display_content = content
+    
+    # 1. Voice Icon
+    if isinstance(message.channel, discord.VoiceChannel):
+        display_content = f"🔊 {display_content}"
+
+    # 2. Standard Ping Replacement
+    display_content = display_content.replace(f"<@{bot.user.id}>", f"<@{config['friend_user_id']}>")
+    display_content = display_content.replace(f"<@!{bot.user.id}>", f"<@{config['friend_user_id']}>")
+
+    # 3. Attachments
+    for att in message.attachments:
+        display_content += f"\n{att.url}"
+        
+    return display_content
+
+@bot.event
+async def on_ready():
+    print(f'Bot is ready! Logged in as {bot.user}')
+
+@bot.event
+async def on_message(message):
+    global last_friend_message_time
+    
+    if message.author == bot.user:
+        return
+
+    now = datetime.utcnow()
+
+    # --- PART A: FRIEND SENDING MESSAGES (Private -> Main) ---
+    if message.author.id == config['friend_user_id']:
+        
+        # Check if they are typing in the PRIVATE server
+        if message.guild and message.guild.id != message.author.guild.id:
+             # This check isn't quite right for logic, relying on channel ID is safer:
+             pass
+
+        if message.channel.id == config['private_sfw_channel'] or \
+           message.channel.id == config['private_nsfw_channel']:
+
+            if message.content == "-help":
+                help_text = (
+                    f"HI HII silly lily!\n"
+                    f"- messages will be sent to wherever the last message was sent within the last 5 minutes.\n"
+                    f"- otherwise, messages in <#{config['private_sfw_channel']}> will be sent to the general sfw zone and messages in <#{config['private_nsfw_channel']}> will be sent to the general nsfw zone.\n"
+                    f"- you can talk to people who messaged more than 5 minutes ago by replying to their message.\n"
+                    f" - you can ping them in this reply by starting the message with \"-p\"."
+                )
+                await message.channel.send(help_text)
+                return
+
+            last_friend_message_time = now
+            target_channel_id = None
+            reply_to_msg_id = None
+            current_context = None 
+
+            if message.channel.id == config['private_sfw_channel']:
+                current_context = 'sfw'
+                default_target = config['default_sfw_target']
+            elif message.channel.id == config['private_nsfw_channel']:
+                current_context = 'nsfw'
+                default_target = config['default_nsfw_target']
+            
+            # Check Reply
+            reply_entry = None
+            if message.reference:
+                reply_entry = await reply_map_col.find_one({"_id": message.reference.message_id})
+
+            if reply_entry:
+                target_channel_id = reply_entry["channel_id"]
+                reply_to_msg_id = reply_entry["message_id"]
+            else:
+                state_doc = await state_col.find_one({"_id": "state"})
+                last_active_id = None
+                last_active_time = datetime.min
+
+                if state_doc and current_context in state_doc:
+                    data = state_doc[current_context]
+                    last_active_id = data.get("id")
+                    t = data.get("time")
+                    if isinstance(t, datetime):
+                        last_active_time = t
+                
+                if last_active_id and (now - last_active_time < timedelta(minutes=5)):
+                    target_channel_id = last_active_id
+                else:
+                    target_channel_id = default_target
+
+            if target_channel_id:
+                target_channel = bot.get_channel(target_channel_id)
+                if target_channel:
+                    content_to_send = message.content
+                    should_ping = False
+                    
+                    if content_to_send.startswith("-p "):
+                        should_ping = True
+                        content_to_send = content_to_send[3:]
+                    
+                    if message.attachments:
+                        links = "\n".join([att.url for att in message.attachments])
+                        content_to_send += f"\n{links}"
+
+                    sent_msg = None
+                    if reply_to_msg_id:
+                        try:
+                            orig_msg = await target_channel.fetch_message(reply_to_msg_id)
+                            sent_msg = await orig_msg.reply(content_to_send, mention_author=should_ping)
+                        except:
+                            sent_msg = await target_channel.send(content_to_send)
+                    else:
+                        sent_msg = await target_channel.send(content_to_send)
+                    
+                    if sent_msg:
+                        await reply_map_col.insert_one({
+                            "_id": message.id, 
+                            "channel_id": sent_msg.channel.id, 
+                            "message_id": sent_msg.id
+                        })
+                        await mirror_map_col.insert_one({
+                            "_id": sent_msg.id,
+                            "private_msg_id": message.id
+                        })
+            return
+
+    # --- PART B: MAIN SERVER ACTIVITY (Main -> Private) ---
+    
+    # 1. Ignore Blocked Channels
+    if message.channel.id in config.get('blocked_channel_ids', []):
+        return
+
+    # (I removed the "Ignore Friend" check here so she won't be ignored!)
+
+    dest_channel_id = None
+    msg_context = None
+
+    current_channel_id = message.channel.id
+    current_category_id = getattr(message.channel, 'category_id', None)
+
+    if (current_channel_id in config['main_sfw_ids']) or \
+         (current_category_id in config['main_sfw_ids']):
+        dest_channel_id = config['private_sfw_channel']
+        msg_context = 'sfw'
+    elif (current_channel_id in config['main_nsfw_ids']) or \
+         (current_category_id in config['main_nsfw_ids']):
+        dest_channel_id = config['private_nsfw_channel']
+        msg_context = 'nsfw'
+    else:
+        return
+
+    # ONLY update sticky time if it is NOT the friend messaging
+    if message.author.id != config['friend_user_id']:
+        time_since_friend_msg = now - last_friend_message_time
+        if time_since_friend_msg > timedelta(seconds=15):
+            await state_col.update_one(
+                {"_id": "state"},
+                {"$set": {
+                    f"{msg_context}.id": current_channel_id,
+                    f"{msg_context}.time": now
+                }},
+                upsert=True
+            )
+
+    dest_channel = bot.get_channel(dest_channel_id)
+    if dest_channel:
+        try:
+            display_content = format_mirror_content(message, message.content)
+            
+            # Add Reply Suffix
+            reply_suffix = ""
+            ref_msg_private_id = None
+            if message.reference:
+                is_replying_to_friend = False
+                if message.reference.resolved and message.reference.resolved.author == bot.user:
+                    is_replying_to_friend = True
+
+                ref_msg_id = message.reference.message_id
+                mirror_entry = await mirror_map_col.find_one({"_id": ref_msg_id})
+                if mirror_entry:
+                    ref_msg_private_id = mirror_entry["private_msg_id"]
+                
+                should_red_ping = is_replying_to_friend and (bot.user in message.mentions)
+
+                if ref_msg_private_id:
+                    jump_url = f"https://discord.com/channels/{dest_channel.guild.id}/{dest_channel.id}/{ref_msg_private_id}"
+                    if is_replying_to_friend:
+                        if should_red_ping: reply_suffix = f" (<@{config['friend_user_id']}> [reply]({jump_url}))"
+                        else: reply_suffix = f" ([reply]({jump_url}))"
+                    else:
+                        reply_suffix = f" ([reply]({jump_url}))"
+                else:
+                    if is_replying_to_friend:
+                        if should_red_ping: reply_suffix = f" (<@{config['friend_user_id']}>)"
+                        else: reply_suffix = f" (reply)"
+                    else:
+                        reply_suffix = f" (reply)"
+
+            display_content += reply_suffix
+
+            # Custom Emojis & Files
+            files_to_send = []
+            custom_emojis = re.findall(r'<(a?):(\w+):(\d+)>', message.content)
+            unique_emojis = list(set(custom_emojis))
+
+            async with aiohttp.ClientSession() as session:
+                for is_animated, name, emoji_id in unique_emojis:
+                    ext = 'gif' if is_animated else 'png'
+                    url = f"https://cdn.discordapp.com/emojis/{emoji_id}.{ext}"
+                    if not url.endswith('.svg'):
+                        try:
+                            async with session.get(url) as resp:
+                                if resp.status == 200:
+                                    data = await resp.read()
+                                    files_to_send.append(discord.File(io.BytesIO(data), filename=f"{name}.{ext}"))
+                                    full_emoji_str = f"<{ 'a' if is_animated else '' }:{name}:{emoji_id}>"
+                                    display_content = display_content.replace(full_emoji_str, "")
+                        except: pass
+
+            final_embeds = []
+            if message.embeds:
+                for e in message.embeds:
+                    if e.url and e.url in message.content: continue 
+                    if e.type == 'rich' or e.type == 'image': 
+                            final_embeds.append(e)
+
+            webhooks = await dest_channel.webhooks()
+            webhook = discord.utils.get(webhooks, name="MirrorHook")
+            if not webhook:
+                webhook = await dest_channel.create_webhook(name="MirrorHook")
+
+            sent_message = await webhook.send(
+                content=display_content.strip(), 
+                username=message.author.display_name,
+                avatar_url=message.author.display_avatar.url,
+                embeds=final_embeds,
+                files=files_to_send,
+                wait=True 
+            )
+
+            await reply_map_col.insert_one({
+                "_id": sent_message.id, 
+                "channel_id": message.channel.id, 
+                "message_id": message.id
+            })
+            await mirror_map_col.insert_one({
+                "_id": message.id,
+                "private_msg_id": sent_message.id
+            })
+
+        except Exception as e:
+            print(f"Error: {e}")
+
+# --- NEW: HANDLE EDITS ---
+@bot.event
+async def on_message_edit(before, after):
+    if before.content == after.content: return
+    if before.author == bot.user: return
+
+    # 1. Friend Edited (Private -> Main)
+    if before.author.id == config['friend_user_id'] and \
+       (before.channel.id == config['private_sfw_channel'] or before.channel.id == config['private_nsfw_channel']):
+        
+        entry = await reply_map_col.find_one({"_id": before.id})
+        if entry:
+            target_chan = bot.get_channel(entry["channel_id"])
+            if target_chan:
+                try:
+                    target_msg = await target_chan.fetch_message(entry["message_id"])
+                    new_content = after.content
+                    if new_content.startswith("-p "): new_content = new_content[3:]
+                    if after.attachments:
+                        links = "\n".join([att.url for att in after.attachments])
+                        new_content += f"\n{links}"
+                    await target_msg.edit(content=new_content)
+                except: pass
+    
+    # 2. Main Edited (Main -> Private)
+    else:
+        # Check ignores
+        if after.channel.id in config.get('blocked_channel_ids', []): return
+
+        entry = await mirror_map_col.find_one({"_id": before.id})
+        if entry:
+            found_msg = None
+            for cid in [config['private_sfw_channel'], config['private_nsfw_channel']]:
+                c = bot.get_channel(cid)
+                if c:
+                    try:
+                        found_msg = await c.fetch_message(entry["private_msg_id"])
+                        break
+                    except: continue
+            
+            if found_msg:
+                try:
+                    display_content = format_mirror_content(after, after.content)
+                    await found_msg.edit(content=display_content)
+                except: pass
+
+# --- NEW: HANDLE DELETIONS ---
+@bot.event
+async def on_message_delete(message):
+    # 1. Friend Deleted (Private -> Main)
+    if message.author.id == config['friend_user_id'] and \
+       (message.channel.id == config['private_sfw_channel'] or message.channel.id == config['private_nsfw_channel']):
+        
+        entry = await reply_map_col.find_one({"_id": message.id})
+        if entry:
+            target_chan = bot.get_channel(entry["channel_id"])
+            if target_chan:
+                try:
+                    target_msg = await target_chan.fetch_message(entry["message_id"])
+                    await target_msg.delete()
+                except: pass
+    
+    # 2. Main Deleted (Main -> Private)
+    else:
+        entry = await mirror_map_col.find_one({"_id": message.id})
+        if entry:
+            p_msg_id = entry["private_msg_id"]
+            for cid in [config['private_sfw_channel'], config['private_nsfw_channel']]:
+                c = bot.get_channel(cid)
+                if c:
+                    try:
+                        msg = await c.fetch_message(p_msg_id)
+                        await msg.delete()
+                    except: continue
+
+# --- UPDATED: HANDLE REACTIONS ADDED ---
+@bot.event
+async def on_reaction_add(reaction, user):
+    # 1. Friend Reacted (Private -> Main)
+    if user.id == config['friend_user_id'] and \
+       (reaction.message.channel.id == config['private_sfw_channel'] or reaction.message.channel.id == config['private_nsfw_channel']):
+        
+        entry = await reply_map_col.find_one({"_id": reaction.message.id})
+        if entry:
+            target_chan = bot.get_channel(entry["channel_id"])
+            if target_chan:
+                try:
+                    target_msg = await target_chan.fetch_message(entry["message_id"])
+                    await target_msg.add_reaction(reaction.emoji)
+                except: pass
+    
+    # 2. Main Reacted (Main -> Private)
+    elif user != bot.user:
+        # Check ignores
+        if reaction.message.channel.id in config.get('blocked_channel_ids', []): return
+
+        entry = await mirror_map_col.find_one({"_id": reaction.message.id})
+        if entry:
+            p_msg_id = entry["private_msg_id"]
+            for cid in [config['private_sfw_channel'], config['private_nsfw_channel']]:
+                c = bot.get_channel(cid)
+                if c:
+                    try:
+                        msg = await c.fetch_message(p_msg_id)
+                        await msg.add_reaction(reaction.emoji)
+                    except: continue
+
+# --- NEW: HANDLE REACTIONS REMOVED ---
+@bot.event
+async def on_reaction_remove(reaction, user):
+    # 1. Friend Removed Reaction (Private -> Main)
+    if user.id == config['friend_user_id'] and \
+       (reaction.message.channel.id == config['private_sfw_channel'] or reaction.message.channel.id == config['private_nsfw_channel']):
+        
+        entry = await reply_map_col.find_one({"_id": reaction.message.id})
+        if entry:
+            target_chan = bot.get_channel(entry["channel_id"])
+            if target_chan:
+                try:
+                    target_msg = await target_chan.fetch_message(entry["message_id"])
+                    await target_msg.remove_reaction(reaction.emoji, bot.user) 
+                except: pass
+
+    # 2. Main Removed Reaction (Main -> Private)
+    elif user != bot.user:
+        entry = await mirror_map_col.find_one({"_id": reaction.message.id})
+        if entry:
+            p_msg_id = entry["private_msg_id"]
+            for cid in [config['private_sfw_channel'], config['private_nsfw_channel']]:
+                c = bot.get_channel(cid)
+                if c:
+                    try:
+                        msg = await c.fetch_message(p_msg_id)
+                        await msg.remove_reaction(reaction.emoji, bot.user) 
+                    except: continue
+
+bot.run(TOKEN)

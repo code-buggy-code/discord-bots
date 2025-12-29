@@ -1,0 +1,17 @@
+# Secret files
+BuggyBot/token.json
+BuggyBot/client_secret.json
+BuggyBot/browser.json
+config.json
+secret_bot.py
+
+# Local Database & Tools
+*/database.json
+*/migrate.py
+fix_keys.py
+upgrade_bots.py
+
+# Python temporary files
+__pycache__/
+*.pyc
+nohup.out
