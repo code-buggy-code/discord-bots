@@ -3,7 +3,6 @@ sys.path.append('..')
 from secret_bot import TOKEN as BOT_TOKEN
 import discord
 import random
-# import motor.motor_asyncio
 import io
 import asyncio
 from datetime import datetime, timedelta
@@ -93,9 +92,7 @@ class LocalCollection:
         return found
 
 
-# --- REPLACED CONNECTION ---
-# cluster = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URL)
-# db = cluster["TrollBotDB"]
+# --- COLLECTIONS ---
 settings_col = LocalCollection("settings")
 images_col = LocalCollection("images")
 
@@ -107,6 +104,7 @@ images_cache = {}
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True 
+intents.voice_states = True # Needed to check voice mutes
 
 # BUGGY'S CHOICE: Only uses % now!
 bot = commands.Bot(command_prefix="%", intents=intents, help_command=None)
@@ -192,7 +190,7 @@ async def check_cooldown(ctx):
                 return False
     return True
 
-# --- ADMIN CHECK ---
+# --- NEW ADMIN CHECK ---
 def is_bot_admin():
     async def predicate(ctx):
         # 1. Check Hardcoded ID
@@ -244,8 +242,8 @@ async def on_member_update(before, after):
         # 1. Check for Timeout (Communication Disabled)
         if after.timed_out_until:
             try:
-                # Remove timeout
-                await after.edit(timed_out_until=None, reason="BotherBug Anti-Mute Protection")
+                # Remove timeout by setting it to None
+                await after.timeout(None, reason="BotherBug Anti-Mute Protection")
                 print(f"🛡️ Protected {after.display_name} from timeout.")
             except Exception as e:
                 print(f"Failed to remove timeout from target: {e}")
