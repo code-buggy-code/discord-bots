@@ -63,3 +63,12 @@ To https://github.com/code-buggy-code/discord-bots
    b8f5fd2..27acb51  main -> main
 From https://github.com/code-buggy-code/discord-bots
    27acb51..fa64de3  main       -> origin/main
+[main d277ccd] Auto-sync by Manager
+ 8 files changed, 16 insertions(+), 14 deletions(-)
+To https://github.com/code-buggy-code/discord-bots
+ ! [rejected]        main -> main (non-fast-forward)
+error: failed to push some refs to 'https://github.com/code-buggy-code/discord-bots'
+hint: Updates were rejected because the tip of your current branch is behind
+hint: its remote counterpart. Integrate the remote changes (e.g.
+hint: 'git pull ...') before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
