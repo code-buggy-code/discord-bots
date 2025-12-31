@@ -1,7 +1,6 @@
 import sys
 sys.path.append('..')
 
-# --- SAFE IMPORTS ---
 try:
     from secret_bot import TOKEN, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 except ImportError:
@@ -47,6 +46,7 @@ DEFAULT_CONFIG = {
     "ticket_channel_name_format": "desperate-{username}",
     "ticket_react_message_id": 0,
     "ticket_react_emoji": "✅",
+    "youtube_token_json": "" # NEW: License lives here now!
 }
 
 SIMPLE_SETTINGS = {
@@ -161,23 +161,42 @@ def is_admin():
     return commands.check(predicate)
 
 # --- MUSIC SETUP ---
-def load_youtube_service():
+async def load_youtube_service():
     global youtube
     youtube = None
-    token_path = os.path.join(BASE_DIR, 'token.json')
-    try:
-        if os.path.exists(token_path):
-            creds = Credentials.from_authorized_user_file(token_path, ['https://www.googleapis.com/auth/youtube'])
+    
+    # 1. Try to load from Database first
+    token_json = config.get('youtube_token_json')
+    
+    # 2. Fallback: Try file (migration)
+    if not token_json and os.path.exists(os.path.join(BASE_DIR, 'token.json')):
+        with open(os.path.join(BASE_DIR, 'token.json'), 'r') as f:
+            token_json = f.read()
+    
+    if token_json:
+        try:
+            info = json.loads(token_json)
+            creds = Credentials.from_authorized_user_info(info, ['https://www.googleapis.com/auth/youtube'])
+            
+            # Check validity & Refresh if needed
             if creds and creds.expired and creds.refresh_token:
                 try:
                     creds.refresh(Request())
-                    with open(token_path, 'w') as token: token.write(creds.to_json())
-                except: return False
-            if creds and not creds.expired:
+                    # SAVE NEW TOKEN TO DB
+                    config['youtube_token_json'] = creds.to_json()
+                    await save_config_to_db()
+                    print("✅ Refreshed and saved new YouTube token to DB.")
+                except Exception as e:
+                    print(f"⚠️ Failed to refresh token: {e}")
+                    return False
+            
+            if creds.valid:
                 youtube = build('youtube', 'v3', credentials=creds)
                 return True
-        return False
-    except: return False
+        except Exception as e:
+            print(f"YouTube Service Error: {e}")
+            return False
+    return False
 
 def load_music_services():
     global ytmusic, spotify
@@ -222,7 +241,6 @@ async def send_log(text):
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         await channel.send(f"`[{timestamp}]` 📝 {text}")
 
-# --- TASKS ---
 @tasks.loop(seconds=5)
 async def check_manager_logs():
     if config['log_channel_id'] == 0: return
@@ -262,27 +280,13 @@ async def nightly_purge():
     finally:
         is_purging = False
 
-async def check_token_expiry(is_startup=False):
-    token_path = os.path.join(BASE_DIR, 'token.json')
-    if not os.path.exists(token_path):
-        if is_startup: print("⚠️ Startup Check: token.json not found!")
-        return
-    try:
-        with open(token_path, 'r') as f:
-            data = json.load(f)
-            if 'expiry' in data:
-                expiry_time = datetime.datetime.strptime(data['expiry'][:19], "%Y-%m-%dT%H:%M:%S")
-                time_left = expiry_time - datetime.datetime.utcnow()
-                days = time_left.days
-                if time_left.total_seconds() <= 0: status = "❌ **EXPIRED**"
-                elif days < 1: status = f"⚠️ **URGENT:** Expires in {int(time_left.total_seconds()/3600)}h!"
-                else: status = f"✅ Expires in {days} days."
-                
-                # RESTORED: We log this on startup again!
-                prefix = "🚀 **Bot Started:** " if is_startup else "📅 **Daily Check:** "
-                await send_log(f"{prefix}YouTube License Status: {status}")
-    except Exception as e:
-        print(f"Token Check Error: {e}")
+# Only called by command or scheduler, NOT on startup
+async def check_token_validity_task():
+    await load_youtube_service() # Refreshes if needed
+    if youtube:
+        await send_log("📅 **Daily Check:** YouTube License is Active & Valid.")
+    else:
+        await send_log("❌ **Daily Check:** YouTube License is EXPIRED or BROKEN.")
 
 @bot.event
 async def on_ready():
@@ -299,15 +303,12 @@ async def on_ready():
         check_manager_logs.start()
         print("📬 Mailbox Reader Started!")
 
-    load_youtube_service()
+    await load_youtube_service() # Loads and Refreshes from DB
     load_music_services()
-    
-    # ✅ RESTORED: This will verify the timer immediately!
-    await check_token_expiry(is_startup=True)
     
     if not scheduler.running:
         scheduler.add_job(nightly_purge, CronTrigger(hour=3, minute=0, timezone='US/Eastern'))
-        scheduler.add_job(check_token_expiry, CronTrigger(hour=4, minute=0, timezone='US/Eastern'))
+        scheduler.add_job(check_token_validity_task, CronTrigger(hour=4, minute=0, timezone='US/Eastern'))
         scheduler.start()
     await send_log("Bot is online and ready!")
 
@@ -367,7 +368,6 @@ async def on_member_update(before, after):
 @bot.command()
 @is_admin()
 async def sync(ctx):
-    """(Admin) Pulls changes from GitHub and restarts all bots."""
     await ctx.send("♻️ **Syncing System...**\n1. Pulling code from GitHub...\n2. Restarting all bots (Give me 10 seconds!)")
     os.system("git pull")
     os.system("pkill -f main.py")
@@ -375,31 +375,18 @@ async def sync(ctx):
 @bot.command()
 @is_admin()
 async def checkyoutube(ctx):
-    """(Admin) Manually checks the YouTube license status."""
-    token_path = os.path.join(BASE_DIR, 'token.json')
-    if not os.path.exists(token_path):
-        return await ctx.send("⚠️ **License Error:** `token.json` is missing!")
-    
-    try:
-        with open(token_path, 'r') as f:
-            data = json.load(f)
-            if 'expiry' in data:
-                expiry_time = datetime.datetime.strptime(data['expiry'][:19], "%Y-%m-%dT%H:%M:%S")
-                time_left = expiry_time - datetime.datetime.utcnow()
-                days = time_left.days
-                
-                if time_left.total_seconds() <= 0:
-                    status = "❌ **EXPIRED**"
-                elif days < 1:
-                    status = f"⚠️ **URGENT:** Expires in {int(time_left.total_seconds()/3600)}h!"
-                else:
-                    status = f"✅ Expires in {days} days."
-                
-                await ctx.send(f"📅 **Manual Check:** YouTube License Status: {status}")
-            else:
-                await ctx.send("❓ Token file found, but no expiry date inside.")
-    except Exception as e:
-        await ctx.send(f"❌ Error checking token: {e}")
+    """(Admin) REAL check: Tries to talk to Google."""
+    is_valid = await load_youtube_service() # This refreshes it if possible
+    if is_valid:
+        # Check expiry date string from the config
+        try:
+            data = json.loads(config['youtube_token_json'])
+            expiry = data.get('expiry', 'Unknown')
+            await ctx.send(f"✅ **License Valid!**\nExpiry Date: `{expiry}`\n*(I successfully refreshed it just now)*")
+        except:
+            await ctx.send("✅ **License Valid!** (But I couldn't read the date string)")
+    else:
+        await ctx.send("❌ **License Broken.** I tried to refresh it but failed.")
 
 @bot.command()
 @is_admin()
@@ -483,11 +470,14 @@ async def entercode(ctx, code: str):
     if not auth_flow: return await ctx.send("❌ Run `!refreshyoutube` first!")
     try:
         auth_flow.fetch_token(code=code)
-        token_path = os.path.join(BASE_DIR, 'token.json')
-        with open(token_path, 'w') as token: token.write(auth_flow.credentials.to_json())
-        load_youtube_service()
-        await check_token_expiry()
-        await ctx.send("✅ **Success!** License renewed.")
+        
+        # Save to DB instead of file!
+        creds_json = auth_flow.credentials.to_json()
+        config['youtube_token_json'] = creds_json
+        await save_config_to_db()
+        
+        await load_youtube_service() # Reload it
+        await ctx.send("✅ **Success!** License renewed and saved to Database.")
     except Exception as e: await ctx.send(f"❌ Error: {e}")
 
 @bot.command()
