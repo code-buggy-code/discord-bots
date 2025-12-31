@@ -34,18 +34,19 @@ def queue_discord_msg(content):
 
 # 2. Start Bots (The Watchdog)
 def start_all_bots():
-    # This only lists bots that are NOT running.
-    # It does NOT kill them automatically anymore.
     active_bots = []
     for item in os.listdir(ROOT_DIR):
         folder_path = os.path.join(ROOT_DIR, item)
         if os.path.isdir(folder_path) and "main.py" in os.listdir(folder_path):
             
             script_path = os.path.join(folder_path, "main.py")
-            # Check if running
-            check = subprocess.getoutput(f"ps -ef | grep '{script_path}'")
             
-            if script_path in check:
+            # --- THE FIX ---
+            # We add "| grep -v grep" to ignore the search command itself!
+            check = subprocess.getoutput(f"ps -ef | grep '{script_path}' | grep -v grep")
+            
+            # Now, if 'check' is empty, it means the bot is TRULY dead.
+            if check:
                 active_bots.append(item)
             else:
                 # It is dead! Revive it.
@@ -68,17 +69,14 @@ def check_for_push():
         os.system("git add .")
         os.system('git commit -m "Auto-sync by Manager"')
         os.system("git push")
-        # return False means "No restart needed"
 
 # --- MAIN LOOP ---
 if __name__ == "__main__":
-    # Initial start
-    os.system("pkill -f main.py") # Kill old ones once on startup
-    time.sleep(2)
+    # We don't kill everyone on startup anymore, just check who is missing.
     bots = start_all_bots()
     
-    log(f"✅ Stable Manager Started. Active: {', '.join(bots)}")
-    queue_discord_msg(f"👀 **Manager Online:** Loop fixed! I will only sync when you type `!sync`.")
+    log(f"✅ Fixed Manager Started. Active: {', '.join(bots)}")
+    queue_discord_msg(f"👀 **Manager Online:** I can now see who is actually dead!")
     
     last_report_date = None
 
