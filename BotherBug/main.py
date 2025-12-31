@@ -8,14 +8,14 @@ import io
 import asyncio
 from datetime import datetime, timedelta
 from discord.ext import commands
-
-# --- CONFIGURATION ---
-
-# --- DATABASE SETUP ---
-# --- DATABASE CONNECTION (LOCAL FILE VERSION) ---
 import json
 import os
 
+# --- CONFIGURATION ---
+ADMIN_USER_ID = 1433003746719170560
+
+# --- DATABASE SETUP ---
+# --- DATABASE CONNECTION (LOCAL FILE VERSION) ---
 DB_FILE = "database.json"
 
 class AsyncIterator:
@@ -192,7 +192,19 @@ async def check_cooldown(ctx):
                 return False
     return True
 
-# --- COMMANDS ---
+# --- ADMIN CHECK ---
+def is_bot_admin():
+    async def predicate(ctx):
+        # 1. Check Hardcoded ID
+        if ctx.author.id == ADMIN_USER_ID:
+            return True
+        # 2. Check Server Admin Permission
+        if ctx.author.guild_permissions.administrator:
+            return True
+        return False
+    return commands.check(predicate)
+
+# --- EVENTS ---
 
 @bot.event
 async def on_ready():
@@ -204,7 +216,7 @@ async def on_command_error(ctx, error):
     if ctx.command and ctx.command.name == "add" and isinstance(error, commands.MissingRequiredArgument):
         return 
 
-    if isinstance(error, commands.MissingPermissions):
+    if isinstance(error, (commands.MissingPermissions, commands.CheckFailure)):
         await ctx.send("🚫 You don't have permission to do that, buggy!")
     elif isinstance(error, commands.MemberNotFound):
         await ctx.send("❓ I couldn't find that member. Make sure to tag them!")
@@ -214,8 +226,43 @@ async def on_command_error(ctx, error):
         if not isinstance(error, commands.CommandNotFound):
              print(f"Error: {error}")
 
+@bot.event
+async def on_member_update(before, after):
+    """
+    Watches for updates to members. 
+    If the active troll target is muted or timed out, undo it immediately.
+    """
+    if after.bot: return
+
+    # Get settings for this guild
+    settings = await get_settings(after.guild.id)
+    target_id = settings.get("image_target_id")
+
+    # Only proceed if the updated member is the current troll target
+    if target_id and after.id == target_id:
+        
+        # 1. Check for Timeout (Communication Disabled)
+        if after.timed_out_until:
+            try:
+                # Remove timeout
+                await after.edit(timed_out_until=None, reason="BotherBug Anti-Mute Protection")
+                print(f"🛡️ Protected {after.display_name} from timeout.")
+            except Exception as e:
+                print(f"Failed to remove timeout from target: {e}")
+
+        # 2. Check for Server Voice Mute
+        if after.voice and after.voice.mute:
+            try:
+                # Remove server mute
+                await after.edit(mute=False, reason="BotherBug Anti-Mute Protection")
+                print(f"🛡️ Protected {after.display_name} from voice mute.")
+            except Exception as e:
+                print(f"Failed to remove voice mute from target: {e}")
+
+# --- COMMANDS ---
+
 @bot.command(name="help")
-@commands.has_permissions(administrator=True)
+@is_bot_admin()
 async def custom_help(ctx):
     message = (
         "**BuggingBug Bot Commands (Admins Only):**\n"
@@ -232,11 +279,12 @@ async def custom_help(ctx):
 
 # --- START COMMANDS ---
 @bot.group(name="start", invoke_without_command=True)
-@commands.has_permissions(administrator=True)
+@is_bot_admin()
 async def start(ctx):
     await ctx.send("❓ Start what? Try: `%start troll @user` or `%start react @user`")
 
 @start.command(name="troll")
+@is_bot_admin()
 async def start_troll(ctx, member: discord.Member):
     if await check_cooldown(ctx):
         await update_setting(ctx.guild.id, "image_target_id", member.id)
@@ -254,6 +302,7 @@ async def start_troll(ctx, member: discord.Member):
             await ctx.send(f"⚠️ Error changing identity: {e}")
 
 @start.command(name="react")
+@is_bot_admin()
 async def start_react(ctx, member: discord.Member):
     if await check_cooldown(ctx):
         await update_setting(ctx.guild.id, "react_target_id", member.id)
@@ -262,11 +311,12 @@ async def start_react(ctx, member: discord.Member):
 
 # --- STOP COMMANDS ---
 @bot.group(name="stop", invoke_without_command=True)
-@commands.has_permissions(administrator=True)
+@is_bot_admin()
 async def stop(ctx):
     await ctx.send("❓ Stop what? Try: `%stop troll` or `%stop react`")
 
 @stop.command(name="troll")
+@is_bot_admin()
 async def stop_troll(ctx):
     await update_setting(ctx.guild.id, "image_target_id", None)
     
@@ -277,13 +327,14 @@ async def stop_troll(ctx):
         await ctx.send(f"🛑 Stopped trolling, but couldn't reset nickname: {e}")
 
 @stop.command(name="react")
+@is_bot_admin()
 async def stop_react(ctx):
     await update_setting(ctx.guild.id, "react_target_id", None)
     await ctx.send("🛑 **STOPPED REACTING!**")
 
 # --- OTHER COMMANDS (Backwards Compatible) ---
 @bot.command(name="select")
-@commands.has_permissions(administrator=True)
+@is_bot_admin()
 async def select_shim(ctx, option: str = None, value: str = None):
     if option == "reaction" and value:
         await update_setting(ctx.guild.id, "reaction", value)
@@ -292,11 +343,12 @@ async def select_shim(ctx, option: str = None, value: str = None):
         await ctx.send("ℹ️ Try using `%start troll` or `%start react` now!")
 
 @bot.group(name="image", invoke_without_command=True)
-@commands.has_permissions(administrator=True)
+@is_bot_admin()
 async def image(ctx):
     await ctx.send("❓ Image what? Try: `list`, `add`, or `remove`.")
 
 @image.command(name="list")
+@is_bot_admin()
 async def image_list(ctx):
     urls = await get_guild_images(ctx.guild.id)
     if not urls:
@@ -312,6 +364,7 @@ async def image_list(ctx):
             await ctx.send(msg)
 
 @image.command(name="add")
+@is_bot_admin()
 async def image_add(ctx, url: str = None):
     if url is None:
         if ctx.message.attachments:
@@ -324,6 +377,7 @@ async def image_add(ctx, url: str = None):
     await ctx.send(f"✅ Added image: {url}")
 
 @image.command(name="remove")
+@is_bot_admin()
 async def image_remove(ctx, url: str):
     success = await remove_image_from_cache(ctx.guild.id, url)
     if success:
@@ -332,7 +386,7 @@ async def image_remove(ctx, url: str):
         await ctx.send("❓ I couldn't find that image.")
 
 @bot.command(name="targets")
-@commands.has_permissions(administrator=True)
+@is_bot_admin()
 async def show_targets(ctx):
     settings = await get_settings(ctx.guild.id)
     
