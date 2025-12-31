@@ -1,7 +1,7 @@
 import sys
 sys.path.append('..')
 
-# --- SAFE IMPORTS (Prevents crashes if keys missing) ---
+# --- SAFE IMPORTS (Prevents crashes if keys are missing) ---
 try:
     from secret_bot import TOKEN, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 except ImportError:
@@ -300,7 +300,7 @@ async def on_ready():
     load_youtube_service()
     load_music_services()
     
-    # NOTE: Startup check removed (as requested). Only scheduled check runs.
+    # NOTE: Startup check removed. Only scheduled check runs now.
     
     if not scheduler.running:
         scheduler.add_job(nightly_purge, CronTrigger(hour=3, minute=0, timezone='US/Eastern'))
@@ -368,7 +368,7 @@ async def sync(ctx):
     """(Admin) Pulls changes from GitHub and restarts all bots."""
     await ctx.send("♻️ **Syncing System...**\n1. Pulling code from GitHub...\n2. Restarting all bots (Give me 10 seconds!)")
     os.system("git pull")
-    os.system("pkill -f main.py")
+    os.system("pkill -f main.py") # Manager will revive it
 
 @bot.command()
 @is_admin()
