@@ -263,12 +263,13 @@ async def on_member_update(before, after):
 @is_bot_admin()
 async def custom_help(ctx):
     message = (
-        "**BuggingBug Bot Commands (Admins Only):**\n"
-        "`%start troll @user` - BECOME the user (2hr Cooldown).\n"
-        "`%stop troll` - Stop copying and reset nickname.\n"
-        "`%start react @user` - Start reacting to a user.\n"
+        "**BotherBug Commands (Admins Only):**\n"
+        "`%start troll @user` - Steal a user's face and nickname (2hr Cooldown).\n"
+        "`%stop troll` - Return to normal.\n"
+        "`%start react @user` - Start reacting to a user's messages.\n"
         "`%stop react` - Stop reacting.\n"
-        "`%select reaction [emoji]` - Pick the reaction emoji.\n"
+        "`%select reaction [emoji]` - Set the emoji used for reacting.\n"
+        "`%targets` - View the current troll and react targets.\n"
         "`%image list` - See all troll images.\n"
         "`%image add [url]` - Add a new image.\n"
         "`%image remove [url]` - Remove an image URL."
