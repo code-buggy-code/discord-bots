@@ -20,7 +20,6 @@ def log(message):
 
 # 1. WRITE to the Mailbox (Hand log to BuggyBot)
 def queue_discord_msg(content):
-    # Load existing queue
     queue = []
     if os.path.exists(IPC_FILE):
         try:
@@ -28,83 +27,70 @@ def queue_discord_msg(content):
                 queue = json.load(f)
         except: queue = []
     
-    # Add new message
     queue.append(content)
     
-    # Save back to file
     with open(IPC_FILE, "w") as f:
         json.dump(queue, f)
 
 # 2. Start Bots (The Watchdog)
 def start_all_bots():
-    log("🔌 (Re)starting the bot family...")
-    os.system("pkill -f main.py")
-    time.sleep(2)
-
+    # This only lists bots that are NOT running.
+    # It does NOT kill them automatically anymore.
     active_bots = []
     for item in os.listdir(ROOT_DIR):
         folder_path = os.path.join(ROOT_DIR, item)
         if os.path.isdir(folder_path) and "main.py" in os.listdir(folder_path):
-            os.chdir(folder_path)
-            # Use nohup to keep them alive
-            os.system(f"nohup python3 main.py > ../{item}.log 2>&1 &")
-            active_bots.append(item)
-            os.chdir(ROOT_DIR)
+            
+            script_path = os.path.join(folder_path, "main.py")
+            # Check if running
+            check = subprocess.getoutput(f"ps -ef | grep '{script_path}'")
+            
+            if script_path in check:
+                active_bots.append(item)
+            else:
+                # It is dead! Revive it.
+                log(f"⚡ (Re)starting {item}...")
+                os.chdir(folder_path)
+                os.system(f"nohup python3 main.py > ../{item}.log 2>&1 &")
+                active_bots.append(item)
+                os.chdir(ROOT_DIR)
             
     return active_bots
 
-# 3. Check for Cloud Updates
-def check_for_pull():
-    os.chdir(ROOT_DIR)
-    os.system("git fetch")
-    status = subprocess.getoutput("git status")
-    if "Your branch is behind" in status:
-        log("🚀 Update found on GitHub! Downloading...")
-        os.system("git pull")
-        return True 
-    return False
-
-# 4. Check for Local Changes
+# 3. Check for Local Changes (Quiet Backup)
 def check_for_push():
     os.chdir(ROOT_DIR)
     status = subprocess.getoutput("git status --porcelain")
     
     if status:
-        log("💾 Local changes detected! Syncing to GitHub...")
+        # We just save the data, we do NOT restart the bots!
+        log("💾 Local changes detected. Backing up to GitHub (Quietly)...")
         os.system("git add .")
         os.system('git commit -m "Auto-sync by Manager"')
         os.system("git push")
-        return True 
-    return False
+        # return False means "No restart needed"
 
 # --- MAIN LOOP ---
 if __name__ == "__main__":
-    # Start bots immediately
+    # Initial start
+    os.system("pkill -f main.py") # Kill old ones once on startup
+    time.sleep(2)
     bots = start_all_bots()
-    log(f"✅ Mailbox Manager Started. Active: {', '.join(bots)}")
-    queue_discord_msg(f"👀 **Manager Online:** I am using the Mailbox system now!")
+    
+    log(f"✅ Stable Manager Started. Active: {', '.join(bots)}")
+    queue_discord_msg(f"👀 **Manager Online:** Loop fixed! I will only sync when you type `!sync`.")
     
     last_report_date = None
 
     while True:
         try:
-            restart_needed = False
-            
-            if check_for_pull():
-                log("📥 Pulled updates from cloud.")
-                restart_needed = True
-            
-            # We catch push errors so the bot doesn't crash if git gets messy
-            try:
-                if check_for_push():
-                    log("📤 Pushed local changes to cloud.")
-                    restart_needed = True
-            except: pass
+            # 1. Watchdog: Keep them alive
+            bots = start_all_bots()
 
-            if restart_needed:
-                bots = start_all_bots()
-                queue_discord_msg(f"♻️ System synced and bots restarted.\nActive: {', '.join(bots)}")
+            # 2. Backup: Save data without killing bots
+            check_for_push()
 
+            # 3. Daily Report (4 AM)
             now = datetime.datetime.now()
             if now.hour == DAILY_REPORT_HOUR and last_report_date != now.date():
                 status_msg = f"Good morning! \nTime: {now.strftime('%c')}\nActive Bots: {len(bots)}\nSystem is healthy."
