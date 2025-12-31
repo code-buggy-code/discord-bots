@@ -114,6 +114,24 @@ class LocalCollection:
         await self.delete_one(query)
         await self.insert_one(doc)
 
+    async def update_one(self, query, update):
+        all_data = self._load_all()
+        collection = all_data.get(self.name, [])
+        found = False
+        for doc in collection:
+            # Check if this doc matches the query
+            if all(doc.get(k) == v for k, v in query.items()):
+                # Handle $set update
+                if "$set" in update:
+                    doc.update(update["$set"])
+                found = True
+                break
+        
+        if found:
+            self._save_all(all_data)
+        return found
+
+
 # --- REPLACED CONNECTION ---
 # cluster = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URL)
 # db = cluster["lilybot_db"]

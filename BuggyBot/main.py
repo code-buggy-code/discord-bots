@@ -336,8 +336,8 @@ async def check_token_expiry(is_startup=False):
 async def on_ready():
     global db, sticky_data
     try:
-        db = DatabaseHandler(MONGO_URI, DB_NAME)
-        await db.client.admin.command('ping')
+        db = DatabaseHandler("", DB_NAME)
+        # await db.client.admin.command('ping')
         await load_initial_config()
         sticky_data = await db.load_stickies()
     except Exception as e:

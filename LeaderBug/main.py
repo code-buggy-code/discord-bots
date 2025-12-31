@@ -241,8 +241,8 @@ async def on_ready():
     try:
         # 1. Initialize DB Connection and Test Ping
         print(f"Attempting to connect to MongoDB...")
-        db = DatabaseHandler(MONGO_URI, DB_NAME)
-        await db.client.admin.command('ping')
+        db = DatabaseHandler("", DB_NAME)
+        # await db.client.admin.command('ping')
         print("Successfully connected to MongoDB!")
 
         # 2. Load Config from DB
