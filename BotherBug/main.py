@@ -14,7 +14,6 @@ import os
 ADMIN_USER_ID = 1433003746719170560
 
 # --- DATABASE SETUP ---
-# --- DATABASE CONNECTION (LOCAL FILE VERSION) ---
 DB_FILE = "database.json"
 
 class AsyncIterator:
@@ -74,23 +73,32 @@ class LocalCollection:
         await self.delete_one(query)
         await self.insert_one(doc)
 
-    async def update_one(self, query, update):
+    # --- THE FIX IS HERE! ---
+    async def update_one(self, query, update, upsert=False):
         all_data = self._load_all()
-        collection = all_data.get(self.name, [])
+        if self.name not in all_data: all_data[self.name] = []
+        
+        collection = all_data[self.name]
         found = False
+        
         for doc in collection:
-            # Check if this doc matches the query
             if all(doc.get(k) == v for k, v in query.items()):
-                # Handle $set update
                 if "$set" in update:
                     doc.update(update["$set"])
                 found = True
                 break
         
+        # If not found and upsert is True, create it!
+        if not found and upsert:
+            new_doc = query.copy()
+            if "$set" in update:
+                new_doc.update(update["$set"])
+            collection.append(new_doc)
+            found = True # We successfully "updated" by creating
+        
         if found:
             self._save_all(all_data)
         return found
-
 
 # --- COLLECTIONS ---
 settings_col = LocalCollection("settings")
@@ -104,9 +112,8 @@ images_cache = {}
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True 
-intents.voice_states = True # Needed to check voice mutes
+intents.voice_states = True 
 
-# BUGGY'S CHOICE: Only uses % now!
 bot = commands.Bot(command_prefix="%", intents=intents, help_command=None)
 
 # --- HELPER FUNCTIONS ---
@@ -146,6 +153,7 @@ async def get_settings(guild_id):
     return result
 
 async def update_setting(guild_id, key, value):
+    # This checks "upsert=True" which was crashing before!
     await settings_col.update_one({"_id": guild_id}, {"$set": {key: value}}, upsert=True)
     
     if guild_id not in settings_cache:
@@ -182,7 +190,14 @@ async def check_cooldown(ctx):
     last_updated = settings.get("last_updated")
     
     if last_updated:
-        if isinstance(last_updated, datetime):
+        # Handle string timestamps from JSON
+        if isinstance(last_updated, str):
+            try:
+                last_updated = datetime.fromisoformat(last_updated)
+            except:
+                last_updated = None
+
+        if last_updated:
             time_diff = datetime.utcnow() - last_updated
             if time_diff < timedelta(hours=2):
                 hours_left = 2 - (time_diff.total_seconds() / 3600)
@@ -190,13 +205,11 @@ async def check_cooldown(ctx):
                 return False
     return True
 
-# --- NEW ADMIN CHECK ---
+# --- ADMIN CHECK ---
 def is_bot_admin():
     async def predicate(ctx):
-        # 1. Check Hardcoded ID
         if ctx.author.id == ADMIN_USER_ID:
             return True
-        # 2. Check Server Admin Permission
         if ctx.author.guild_permissions.administrator:
             return True
         return False
@@ -206,7 +219,7 @@ def is_bot_admin():
 
 @bot.event
 async def on_ready():
-    print("--- BUGGY'S BOT IS READY (% ONLY MODE) ---")
+    print("--- BOTHERBUG IS READY ---")
     print(f"Logged in as {bot.user}")
 
 @bot.event
@@ -232,17 +245,14 @@ async def on_member_update(before, after):
     """
     if after.bot: return
 
-    # Get settings for this guild
     settings = await get_settings(after.guild.id)
     target_id = settings.get("image_target_id")
 
-    # Only proceed if the updated member is the current troll target
     if target_id and after.id == target_id:
         
-        # 1. Check for Timeout (Communication Disabled)
+        # 1. Check for Timeout
         if after.timed_out_until:
             try:
-                # Remove timeout by setting it to None
                 await after.timeout(None, reason="BotherBug Anti-Mute Protection")
                 print(f"🛡️ Protected {after.display_name} from timeout.")
             except Exception as e:
@@ -251,7 +261,6 @@ async def on_member_update(before, after):
         # 2. Check for Server Voice Mute
         if after.voice and after.voice.mute:
             try:
-                # Remove server mute
                 await after.edit(mute=False, reason="BotherBug Anti-Mute Protection")
                 print(f"🛡️ Protected {after.display_name} from voice mute.")
             except Exception as e:
@@ -331,7 +340,7 @@ async def stop_react(ctx):
     await update_setting(ctx.guild.id, "react_target_id", None)
     await ctx.send("🛑 **STOPPED REACTING!**")
 
-# --- OTHER COMMANDS (Backwards Compatible) ---
+# --- OTHER COMMANDS ---
 @bot.command(name="select")
 @is_bot_admin()
 async def select_shim(ctx, option: str = None, value: str = None):
