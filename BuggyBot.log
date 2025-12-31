@@ -1,0 +1,18 @@
+/home/ubuntu/.local/lib/python3.8/site-packages/google/api_core/_python_version_support.py:237: FutureWarning: You are using a non-supported Python version (3.8.10). Google will not post any further updates to google.api_core supporting this Python version. Please upgrade to the latest Python version, or at least Python 3.10, and then update google.api_core.
+  warnings.warn(message, FutureWarning)
+[2025-12-31 22:20:41] [INFO    ] discord.client: logging in using static token
+[2025-12-31 22:20:42] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: ba80b124a7b2b5d434c465d9325e6eb0).
+[2025-12-31 22:21:00] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448474871381364868/messages/1449014379273257102 responded with 429. Retrying in 0.30 seconds.
+[2025-12-31 22:21:00] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448474871381364868/messages/1448671063906193581 responded with 429. Retrying in 0.82 seconds.
+[2025-12-31 22:21:01] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448474871381364868/messages/1448476111695515752 responded with 429. Retrying in 0.79 seconds.
+[2025-12-31 22:21:22] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449949942042067096 responded with 429. Retrying in 0.65 seconds.
+[2025-12-31 22:21:23] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449948983354196021 responded with 429. Retrying in 0.72 seconds.
+[2025-12-31 22:21:24] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449902973860708352 responded with 429. Retrying in 0.79 seconds.
+[2025-12-31 22:21:25] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449902478320472064 responded with 429. Retrying in 0.54 seconds.
+[2025-12-31 22:21:26] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449218176029036684 responded with 429. Retrying in 0.77 seconds.
+[2025-12-31 22:21:27] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449205164203315354 responded with 429. Retrying in 0.76 seconds.
+[2025-12-31 22:21:28] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448911831480406127 responded with 429. Retrying in 0.83 seconds.
+[2025-12-31 22:21:29] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448899212065640609 responded with 429. Retrying in 0.60 seconds.
+[2025-12-31 22:21:30] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448819794534072322 responded with 429. Retrying in 0.80 seconds.
+[2025-12-31 22:21:31] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448492254879809733 responded with 429. Retrying in 0.73 seconds.
+[2025-12-31 22:21:32] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448476498003492974 responded with 429. Retrying in 0.81 seconds.
