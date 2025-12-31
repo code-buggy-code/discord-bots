@@ -1,3 +1,128 @@
 [2025-12-31 07:02:57] [INFO    ] discord.client: logging in using static token
 [2025-12-31 07:02:57] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: 11d2082ee3a7463dd1929e63b7c68646).
 [2025-12-31 08:01:23] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 11d2082ee3a7463dd1929e63b7c68646.
+Attempting to connect to MongoDB...
+Successfully connected to MongoDB!
+Configuration loaded from MongoDB.
+Hello! I am logged in as leader bug#1362 with prefix "^"
+Waiting 121 seconds to align point_saver to the next clean 5-minute mark...
+Background tasks started.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 07:05:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 07:10:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 07:15:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 07:20:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 07:25:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 07:30:02.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 07:35:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 07:40:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 07:45:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 07:50:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 07:55:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:00:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:05:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:10:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:15:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:20:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:25:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:30:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:35:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:40:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:45:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:50:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 08:55:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 09:00:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 09:05:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 09:10:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 09:15:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 09:20:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
+Background save completed at 2025-12-31 09:25:01.
+Permanent Leaderboard for Group2 updated in 👑-leaderboard.
+Permanent Leaderboard for Group1 updated in 👑-leaderboard.
+Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
