@@ -4,7 +4,7 @@ import json
 import os
 from secret_bot import TOKEN
 
-# --- 1. DATABASE HANDLER (Local System) ---
+# --- 1. DATABASE HANDLER ---
 DB_FILE = "database.json"
 
 class LocalCollection:
@@ -63,7 +63,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 config_cache = {
     "log_channel": None, 
     "access_msg_id": None, 
-    "access_channel_id": None, # Stored to make the link work!
+    "access_channel_id": None,
     "ticket_category": None, 
     "ticket_channels": []
 }
@@ -93,21 +93,16 @@ async def on_ready():
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def settings(ctx):
-    # Construct "link to access" (The Jump URL)
+    # Access Link
     access_link = "None"
     if config_cache['access_msg_id'] and config_cache['access_channel_id']:
-        # Format: https://discord.com/channels/GUILD_ID/CHANNEL_ID/MSG_ID
         access_link = f"https://discord.com/channels/{ctx.guild.id}/{config_cache['access_channel_id']}/{config_cache['access_msg_id']}"
     elif config_cache['access_msg_id']:
         access_link = f"ID: {config_cache['access_msg_id']} (Channel unknown)"
 
-    # Category link (Mention)
     cat_link = f"<#{config_cache['ticket_category']}>" if config_cache['ticket_category'] else "None"
-    
-    # Log link
     log_link = f"<#{config_cache['log_channel']}>" if config_cache['log_channel'] else "None"
-
-    # Tickets count
+    
     ticket_count = len(config_cache['ticket_channels'])
     
     msg = (
@@ -121,7 +116,6 @@ async def settings(ctx):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def log(ctx):
-    """Sets the current channel as the log channel."""
     config_cache['log_channel'] = ctx.channel.id
     await config_col.update_one({"_id": "settings"}, {"$set": {"log_channel": ctx.channel.id}})
     await ctx.send(f"✅ **Log Channel** set to {ctx.channel.mention}")
@@ -129,7 +123,6 @@ async def log(ctx):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def category(ctx, cat: discord.CategoryChannel):
-    """Sets the category for new tickets (Usage: !category ID_OR_NAME)."""
     config_cache['ticket_category'] = cat.id
     await config_col.update_one({"_id": "settings"}, {"$set": {"ticket_category": cat.id}})
     await ctx.send(f"✅ **Ticket Category** set to {cat.mention}")
@@ -137,7 +130,6 @@ async def category(ctx, cat: discord.CategoryChannel):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def access(ctx, message: discord.Message):
-    """Sets the access button. (Usage: !access <Message_Link_or_ID>)."""
     config_cache['access_msg_id'] = message.id
     config_cache['access_channel_id'] = message.channel.id
     
@@ -187,27 +179,23 @@ async def on_raw_reaction_add(payload):
     if payload.message_id == config_cache['access_msg_id']:
         guild = bot.get_guild(payload.guild_id)
         
-        # Cleanup reaction
         channel = bot.get_channel(payload.channel_id)
         try:
             msg = await channel.fetch_message(payload.message_id)
             await msg.remove_reaction(payload.emoji, payload.member)
         except: pass
 
-        # Overwrites
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             payload.member: discord.PermissionOverwrite(view_channel=True, send_messages=True),
             guild.me: discord.PermissionOverwrite(view_channel=True)
         }
         
-        # Get Category
         cat = None
         if config_cache['ticket_category']:
             cat = guild.get_channel(config_cache['ticket_category'])
 
         ticket_name = f"ticket-{payload.member.name}"
-        # Create with category
         ticket_channel = await guild.create_text_channel(ticket_name, overwrites=overwrites, category=cat)
         
         config_cache['ticket_channels'].append(ticket_channel.id)
@@ -228,6 +216,14 @@ async def on_message(message):
     if message.author.bot: return
     
     if message.channel.id in config_cache['ticket_channels']:
+        
+        # --- SIMPLE ADMIN CHECK ---
+        if message.author.guild_permissions.administrator:
+            # Admins can do whatever they want
+            await bot.process_commands(message)
+            return
+        # --------------------------
+
         has_attachment = bool(message.attachments)
         has_embed = bool(message.embeds)
         has_link = "http" in message.content
