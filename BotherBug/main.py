@@ -5,7 +5,7 @@ import discord
 import random
 import io
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from discord.ext import commands
 import json
 import os
@@ -73,7 +73,6 @@ class LocalCollection:
         await self.delete_one(query)
         await self.insert_one(doc)
 
-    # --- THE FIX IS HERE! ---
     async def update_one(self, query, update, upsert=False):
         all_data = self._load_all()
         if self.name not in all_data: all_data[self.name] = []
@@ -94,7 +93,7 @@ class LocalCollection:
             if "$set" in update:
                 new_doc.update(update["$set"])
             collection.append(new_doc)
-            found = True # We successfully "updated" by creating
+            found = True
         
         if found:
             self._save_all(all_data)
@@ -153,7 +152,6 @@ async def get_settings(guild_id):
     return result
 
 async def update_setting(guild_id, key, value):
-    # This checks "upsert=True" which was crashing before!
     await settings_col.update_one({"_id": guild_id}, {"$set": {key: value}}, upsert=True)
     
     if guild_id not in settings_cache:
@@ -184,26 +182,6 @@ async def remove_image_from_cache(guild_id, url):
         if url in images_cache[guild_id]:
             images_cache[guild_id].remove(url)
     return result.deleted_count > 0
-
-async def check_cooldown(ctx):
-    settings = await get_settings(ctx.guild.id)
-    last_updated = settings.get("last_updated")
-    
-    if last_updated:
-        # Handle string timestamps from JSON
-        if isinstance(last_updated, str):
-            try:
-                last_updated = datetime.fromisoformat(last_updated)
-            except:
-                last_updated = None
-
-        if last_updated:
-            time_diff = datetime.utcnow() - last_updated
-            if time_diff < timedelta(hours=2):
-                hours_left = 2 - (time_diff.total_seconds() / 3600)
-                await ctx.send(f"⏳ **Cooldown!** You must wait {hours_left:.1f} more hours before changing the target.")
-                return False
-    return True
 
 # --- ADMIN CHECK ---
 def is_bot_admin():
@@ -273,7 +251,7 @@ async def on_member_update(before, after):
 async def custom_help(ctx):
     message = (
         "**BotherBug Commands (Admins Only):**\n"
-        "`%start troll @user` - Steal a user's face and nickname (2hr Cooldown).\n"
+        "`%start troll @user` - Steal a user's face and nickname.\n"
         "`%stop troll` - Return to normal.\n"
         "`%start react @user` - Start reacting to a user's messages.\n"
         "`%stop react` - Stop reacting.\n"
@@ -294,28 +272,28 @@ async def start(ctx):
 @start.command(name="troll")
 @is_bot_admin()
 async def start_troll(ctx, member: discord.Member):
-    if await check_cooldown(ctx):
-        await update_setting(ctx.guild.id, "image_target_id", member.id)
-        await update_setting(ctx.guild.id, "last_updated", datetime.utcnow())
-        
-        try:
-            await ctx.guild.me.edit(nick=member.display_name)
-            if member.avatar:
-                avatar_bytes = await member.avatar.read()
-                await bot.user.edit(avatar=avatar_bytes)
-            await ctx.send(f"✅ **STARTED TROLLING!** I have stolen **{member.display_name}'s** face!")
-        except discord.HTTPException as e:
-            await ctx.send(f"⚠️ Discord blocked the face change (Rate Limit?): {e}")
-        except Exception as e:
-            await ctx.send(f"⚠️ Error changing identity: {e}")
+    # Cooldown check removed!
+    await update_setting(ctx.guild.id, "image_target_id", member.id)
+    await update_setting(ctx.guild.id, "last_updated", datetime.utcnow())
+    
+    try:
+        await ctx.guild.me.edit(nick=member.display_name)
+        if member.avatar:
+            avatar_bytes = await member.avatar.read()
+            await bot.user.edit(avatar=avatar_bytes)
+        await ctx.send(f"✅ **STARTED TROLLING!** I have stolen **{member.display_name}'s** face!")
+    except discord.HTTPException as e:
+        await ctx.send(f"⚠️ Discord blocked the face change (Rate Limit?): {e}")
+    except Exception as e:
+        await ctx.send(f"⚠️ Error changing identity: {e}")
 
 @start.command(name="react")
 @is_bot_admin()
 async def start_react(ctx, member: discord.Member):
-    if await check_cooldown(ctx):
-        await update_setting(ctx.guild.id, "react_target_id", member.id)
-        await update_setting(ctx.guild.id, "last_updated", datetime.utcnow())
-        await ctx.send(f"✅ **STARTED REACTING!** I will react to **{member.display_name}**.")
+    # Cooldown check removed!
+    await update_setting(ctx.guild.id, "react_target_id", member.id)
+    await update_setting(ctx.guild.id, "last_updated", datetime.utcnow())
+    await ctx.send(f"✅ **STARTED REACTING!** I will react to **{member.display_name}**.")
 
 # --- STOP COMMANDS ---
 @bot.group(name="stop", invoke_without_command=True)
