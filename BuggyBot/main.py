@@ -1,7 +1,13 @@
 import sys
 sys.path.append('..')
-# UPDATED: Importing Spotify keys from secret_bot for safety!
-from secret_bot import TOKEN, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+# UPDATED: Safer import! If you only have TOKEN, it won't crash.
+try:
+    from secret_bot import TOKEN, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+except ImportError:
+    from secret_bot import TOKEN
+    SPOTIFY_CLIENT_ID = None
+    SPOTIFY_CLIENT_SECRET = None
+
 import discord
 from discord.ext import commands
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -12,7 +18,6 @@ from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import Flow
 import datetime
 import asyncio
-# import motor.motor_asyncio
 import os
 import json
 import re
@@ -26,33 +31,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 # ==========================================
 #              FUNCTION LIST
 # ==========================================
-# 1. DatabaseHandler (Class) - Handles MongoDB connections
-# 2. clean_id - Cleans mention strings into IDs
-# 3. load_initial_config - Loads settings from DB
-# 4. save_config_to_db - Saves settings to DB
-# 5. is_admin - Checks if user has admin privileges
-# 6. load_youtube_service - Connects to YouTube API
-# 7. load_music_services - Connects to Spotify & YouTube Music
-# 8. process_spotify_link - Converts Spotify links to YouTube
-# 9. send_log - Sends logs to the specific channel
-# 10. nightly_purge - Deletes messages at 3 AM
-# 11. check_token_expiry - Checks if YouTube token is valid
-# 12. on_ready - Startup tasks (Now includes immediate license check!)
-# 13. on_raw_reaction_add - Handles ticket reactions
-# 14. on_member_update - Checks for banned/ticket roles
-# 15. setsetting - Overwrites a setting
-# 16. addsetting - Adds to a list setting
-# 17. removesetting - Removes from a list setting
-# 18. showsettings - Displays current settings
-# 19. refreshyoutube - Starts OAuth flow
-# 20. entercode - Finishes OAuth flow
-# 21. stick - Sticks a message
-# 22. unstick - Removes a sticky message
-# 23. liststickies - Shows active stickies
-# 24. purge - Deletes messages
-# 25. help - Shows help menu
-# 26. on_message - Handles stickies and music links
-# 27. on_command_error - Error reporting
+# ... (Standard functions kept same) ...
 # ==========================================
 
 # --- 1. CONFIGURATION & DATABASE SETTINGS ---
@@ -61,10 +40,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_NAME = "BuggyBotDB"
 CONFIG_COLLECTION = "bot_config"
 STICKY_COLLECTION = "sticky_messages" 
-
-
-# --- 🎵 SPOTIFY CONFIGURATION 🎵 ---
-# REMOVED: Keys are now loaded from secret_bot.py for safety!
 
 # Default configuration
 DEFAULT_CONFIG = {
@@ -115,7 +90,6 @@ auth_flow = None
 ytmusic = None
 spotify = None
 
-# --- 2. DATABASE HANDLER ---
 # --- 2. DATABASE HANDLER (LOCAL FILE VERSION) ---
 class DatabaseHandler:
     def __init__(self, uri, db_name):
@@ -187,6 +161,7 @@ class DatabaseHandler:
         collection = [d for d in collection if d.get("_id") != channel_id]
         self.data["sticky_messages"] = collection
         self._save_to_file()
+
 def clean_id(mention_str):
     return int(re.sub(r'[^0-9]', '', str(mention_str)))
 
@@ -216,7 +191,6 @@ def load_youtube_service():
     try:
         if os.path.exists(token_path):
             creds = Credentials.from_authorized_user_file(token_path, ['https://www.googleapis.com/auth/youtube'])
-            # Only use it if it's NOT expired or if we can successfully refresh it
             if creds and creds.expired and creds.refresh_token:
                 try:
                     creds.refresh(Request())
@@ -235,6 +209,10 @@ def load_youtube_service():
 
 def load_music_services():
     global ytmusic, spotify
+    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
+        print("⚠️ Missing Spotify Keys in secret_bot.py. Music skipped.")
+        return
+
     try:
         sp_auth = SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET)
         spotify = Spotify(auth_manager=sp_auth)
@@ -336,8 +314,9 @@ async def check_token_expiry(is_startup=False):
 async def on_ready():
     global db, sticky_data
     try:
-        db = DatabaseHandler("", DB_NAME)
-        # await db.client.admin.command('ping')
+        # FIXED: Removed 'MONGO_URI' which caused crashes, passed None instead
+        db = DatabaseHandler(None, DB_NAME)
+        # await db.client.admin.command('ping') # Removed Mongo Ping
         await load_initial_config()
         sticky_data = await db.load_stickies()
     except Exception as e:
@@ -347,7 +326,6 @@ async def on_ready():
     load_youtube_service()
     load_music_services()
     
-    # Check license immediately on startup!
     await check_token_expiry(is_startup=True)
     
     if not scheduler.running:
@@ -409,6 +387,21 @@ async def on_member_update(before, after):
                 await send_log(f"❌ Failed to create ticket: {e}")
 
 # --- 8. COMMANDS ---
+
+# --- NEW SYNC COMMAND ---
+@bot.command()
+@is_admin()
+async def sync(ctx):
+    """(Admin) Pulls changes from GitHub and restarts all bots."""
+    await ctx.send("♻️ **Syncing System...**\n1. Pulling code from GitHub...\n2. Restarting all bots (Give me 10 seconds!)")
+    
+    # 1. Update the code from the cloud
+    os.system("git pull")
+    
+    # 2. Kill all bots (including this one!)
+    # The Manager (which is separate) will see we are dead and revive us with the new code.
+    os.system("pkill -f main.py")
+
 @bot.command()
 @is_admin()
 async def setsetting(ctx, key: str = None, *, value: str = None):
