@@ -4,7 +4,7 @@ import json
 import os
 from secret_bot import TOKEN
 
-# --- 1. DATABASE HANDLER (Local System) ---
+# --- 1. DATABASE HANDLER ---
 DB_FILE = "database.json"
 
 class LocalCollection:
@@ -49,7 +49,6 @@ class LocalCollection:
 
         self._save_all(all_data)
 
-# Connect to a unique collection for BadBug
 config_col = LocalCollection("badbug_config")
 
 # --- 2. BOT SETUP ---
@@ -60,10 +59,12 @@ intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Cache for speed
+# Cache
 config_cache = {
     "log_channel": None, 
     "access_msg_id": None, 
+    "access_channel_id": None,
+    "ticket_category": None, 
     "ticket_channels": []
 }
 
@@ -72,6 +73,8 @@ async def load_config():
     if data:
         config_cache["log_channel"] = data.get("log_channel")
         config_cache["access_msg_id"] = data.get("access_msg_id")
+        config_cache["access_channel_id"] = data.get("access_channel_id")
+        config_cache["ticket_category"] = data.get("ticket_category")
         config_cache["ticket_channels"] = data.get("ticket_channels", [])
     else:
         await config_col.update_one(
@@ -88,47 +91,67 @@ async def on_ready():
 # --- 3. COMMANDS (ADMIN ONLY) ---
 
 @bot.command()
-@commands.has_permissions(administrator=True) # <--- This protects the command!
-async def showsettings(ctx):
-    """Shows the current configuration."""
-    log_ch = f"<#{config_cache['log_channel']}>" if config_cache['log_channel'] else "None"
-    msg_id = config_cache['access_msg_id'] if config_cache['access_msg_id'] else "None"
+@commands.has_permissions(administrator=True)
+async def settings(ctx):
+    # Access Link
+    access_link = "None"
+    if config_cache['access_msg_id'] and config_cache['access_channel_id']:
+        access_link = f"https://discord.com/channels/{ctx.guild.id}/{config_cache['access_channel_id']}/{config_cache['access_msg_id']}"
+    elif config_cache['access_msg_id']:
+        access_link = f"ID: {config_cache['access_msg_id']} (Channel unknown)"
+
+    cat_link = f"<#{config_cache['ticket_category']}>" if config_cache['ticket_category'] else "None"
+    log_link = f"<#{config_cache['log_channel']}>" if config_cache['log_channel'] else "None"
     
-    await ctx.send(
-        f"**⚙️ BadBug Settings**\n"
-        f"📝 **Log Channel:** {log_ch}\n"
-        f"🔘 **Ticket Button Message ID:** `{msg_id}`\n"
-        f"📂 **Active Ticket Channels:** {len(config_cache['ticket_channels'])}"
+    ticket_count = len(config_cache['ticket_channels'])
+    
+    msg = (
+        f"log: {log_link}\n"
+        f"access: {access_link}\n"
+        f"category: {cat_link}\n"
+        f"tickets: {ticket_count}"
     )
+    await ctx.send(msg)
 
 @bot.command()
-@commands.has_permissions(administrator=True) # <--- This protects the command!
-async def setlog(ctx):
-    """Sets the current channel as the join/leave log channel."""
+@commands.has_permissions(administrator=True)
+async def log(ctx):
     config_cache['log_channel'] = ctx.channel.id
     await config_col.update_one({"_id": "settings"}, {"$set": {"log_channel": ctx.channel.id}})
     await ctx.send(f"✅ **Log Channel** set to {ctx.channel.mention}")
 
 @bot.command()
-@commands.has_permissions(administrator=True) # <--- This protects the command!
-async def setaccess(ctx, msg_id: int):
-    """Sets the message that users react to for a ticket."""
-    config_cache['access_msg_id'] = msg_id
-    await config_col.update_one({"_id": "settings"}, {"$set": {"access_msg_id": msg_id}})
-    await ctx.send(f"✅ **Ticket Button** set to message ID: `{msg_id}`")
+@commands.has_permissions(administrator=True)
+async def category(ctx, cat: discord.CategoryChannel):
+    config_cache['ticket_category'] = cat.id
+    await config_col.update_one({"_id": "settings"}, {"$set": {"ticket_category": cat.id}})
+    await ctx.send(f"✅ **Ticket Category** set to {cat.mention}")
 
 @bot.command()
-@commands.has_permissions(administrator=True) # <--- This protects the command!
+@commands.has_permissions(administrator=True)
+async def access(ctx, message: discord.Message):
+    config_cache['access_msg_id'] = message.id
+    config_cache['access_channel_id'] = message.channel.id
+    
+    await config_col.update_one(
+        {"_id": "settings"}, 
+        {"$set": {
+            "access_msg_id": message.id,
+            "access_channel_id": message.channel.id
+        }}
+    )
+    await ctx.send(f"✅ **Access Button** linked to [Message]({message.jump_url})")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def add(ctx, member: discord.Member, channel: discord.TextChannel = None):
-    """Allows a user to view a private channel."""
     target_channel = channel or ctx.channel
     await target_channel.set_permissions(member, view_channel=True, send_messages=True)
     await ctx.send(f"✅ Added {member.mention} to {target_channel.mention}")
 
 @bot.command()
-@commands.has_permissions(administrator=True) # <--- This protects the command!
+@commands.has_permissions(administrator=True)
 async def remove(ctx, member: discord.Member, channel: discord.TextChannel = None):
-    """Removes a user's view privileges from a channel."""
     target_channel = channel or ctx.channel
     await target_channel.set_permissions(member, overwrite=None)
     await ctx.send(f"❌ Removed {member.mention} from {target_channel.mention}")
@@ -155,6 +178,7 @@ async def on_raw_reaction_add(payload):
     
     if payload.message_id == config_cache['access_msg_id']:
         guild = bot.get_guild(payload.guild_id)
+        
         channel = bot.get_channel(payload.channel_id)
         try:
             msg = await channel.fetch_message(payload.message_id)
@@ -167,8 +191,12 @@ async def on_raw_reaction_add(payload):
             guild.me: discord.PermissionOverwrite(view_channel=True)
         }
         
+        cat = None
+        if config_cache['ticket_category']:
+            cat = guild.get_channel(config_cache['ticket_category'])
+
         ticket_name = f"ticket-{payload.member.name}"
-        ticket_channel = await guild.create_text_channel(ticket_name, overwrites=overwrites)
+        ticket_channel = await guild.create_text_channel(ticket_name, overwrites=overwrites, category=cat)
         
         config_cache['ticket_channels'].append(ticket_channel.id)
         await config_col.update_one(
@@ -188,6 +216,14 @@ async def on_message(message):
     if message.author.bot: return
     
     if message.channel.id in config_cache['ticket_channels']:
+        
+        # --- SIMPLE ADMIN CHECK ---
+        if message.author.guild_permissions.administrator:
+            # Admins can do whatever they want
+            await bot.process_commands(message)
+            return
+        # --------------------------
+
         has_attachment = bool(message.attachments)
         has_embed = bool(message.embeds)
         has_link = "http" in message.content
@@ -204,11 +240,14 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# This handles the error if a non-admin tries to use a command
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("🚫 **Access Denied:** You need to be an Admin to use this command!")
+    elif isinstance(error, commands.BadArgument):
+         await ctx.send("⚠️ **Error:** I couldn't find that! \nFor `!access` or `!category`, make sure you are pasting a valid ID or Link.")
+    else:
+        print(f"Error: {error}")
 
 if TOKEN:
     bot.run(TOKEN)
