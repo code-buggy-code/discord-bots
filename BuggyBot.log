@@ -1,4 +1,4 @@
 /home/ubuntu/.local/lib/python3.8/site-packages/google/api_core/_python_version_support.py:237: FutureWarning: You are using a non-supported Python version (3.8.10). Google will not post any further updates to google.api_core supporting this Python version. Please upgrade to the latest Python version, or at least Python 3.10, and then update google.api_core.
   warnings.warn(message, FutureWarning)
-[2025-12-31 01:21:52] [INFO    ] discord.client: logging in using static token
-[2025-12-31 01:21:52] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: cde0be8d5a1c48962338896be9c8e551).
+[2025-12-31 01:22:24] [INFO    ] discord.client: logging in using static token
+[2025-12-31 01:22:24] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: 2e862e8be460e9917f02d24eeec0d91e).
