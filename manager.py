@@ -4,7 +4,6 @@ import subprocess
 import sys
 import datetime
 import json
-import urllib.request
 
 # --- CONFIGURATION ---
 DAILY_REPORT_HOUR = 4 # 4 AM
@@ -13,52 +12,30 @@ DAILY_REPORT_HOUR = 4 # 4 AM
 ROOT_DIR = "/home/ubuntu/GitHub"
 sys.path.append(ROOT_DIR)
 
-# 1. Get the Secret Token from BUGGYBOT (The Boss)
-try:
-    from BuggyBot.secret_bot import TOKEN
-except:
-    TOKEN = None
+# Path to the shared "Mailbox" file
+IPC_FILE = os.path.join(ROOT_DIR, "BuggyBot", "pending_logs.json")
 
 def log(message):
     print(f"[{time.strftime('%H:%M:%S')}] {message}")
 
-# 2. Get the Log Channel from BUGGYBOT'S database
-def get_log_channel_id():
-    try:
-        # Look in BuggyBot folder
-        db_path = os.path.join(ROOT_DIR, "BuggyBot", "database.json")
-        with open(db_path, "r") as f:
-            data = json.load(f)
-        
-        # Look for 'bot_config' (BuggyBot's schema)
-        config_list = data.get("bot_config", [])
-        for doc in config_list:
-            if doc.get("_id") == "config":
-                # Look for 'log_channel_id' (BuggyBot's key name)
-                return doc.get("log_channel_id")
-    except:
-        return None
-    return None
+# 1. WRITE to the Mailbox (Hand log to BuggyBot)
+def queue_discord_msg(content):
+    # Load existing queue
+    queue = []
+    if os.path.exists(IPC_FILE):
+        try:
+            with open(IPC_FILE, "r") as f:
+                queue = json.load(f)
+        except: queue = []
+    
+    # Add new message
+    queue.append(content)
+    
+    # Save back to file
+    with open(IPC_FILE, "w") as f:
+        json.dump(queue, f)
 
-# 3. Send to Discord
-def send_discord_msg(content):
-    channel_id = get_log_channel_id()
-    
-    if not TOKEN or not channel_id:
-        return 
-    
-    url = f"https://discord.com/api/v9/channels/{channel_id}/messages"
-    headers = {"Authorization": f"Bot {TOKEN}", "Content-Type": "application/json"}
-    
-    data = {"content": f"📋 **Manager Report**\n```{content[:1900]}```"}
-    
-    try:
-        req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers)
-        urllib.request.urlopen(req)
-    except Exception as e:
-        log(f"⚠️ Failed to send Discord log: {e}")
-
-# 4. Check & Start Bots
+# 2. Start Bots (The Watchdog)
 def start_all_bots():
     log("🔌 (Re)starting the bot family...")
     os.system("pkill -f main.py")
@@ -76,7 +53,7 @@ def start_all_bots():
             
     return active_bots
 
-# 5. Check for Cloud Updates
+# 3. Check for Cloud Updates
 def check_for_pull():
     os.chdir(ROOT_DIR)
     os.system("git fetch")
@@ -87,7 +64,7 @@ def check_for_pull():
         return True 
     return False
 
-# 6. Check for Local Changes
+# 4. Check for Local Changes
 def check_for_push():
     os.chdir(ROOT_DIR)
     status = subprocess.getoutput("git status --porcelain")
@@ -102,11 +79,10 @@ def check_for_push():
 
 # --- MAIN LOOP ---
 if __name__ == "__main__":
+    # Start bots immediately
     bots = start_all_bots()
-    log(f"✅ Manager Started (Using BuggyBot Identity). Active: {', '.join(bots)}")
-    
-    # Try to send a test message right away to verify permission
-    send_discord_msg("👀 **Manager Online:** I am using BuggyBot's credentials now!")
+    log(f"✅ Mailbox Manager Started. Active: {', '.join(bots)}")
+    queue_discord_msg(f"👀 **Manager Online:** I am using the Mailbox system now!")
     
     last_report_date = None
 
@@ -118,18 +94,21 @@ if __name__ == "__main__":
                 log("📥 Pulled updates from cloud.")
                 restart_needed = True
             
-            if check_for_push():
-                log("📤 Pushed local changes to cloud.")
-                restart_needed = True
-            
+            # We catch push errors so the bot doesn't crash if git gets messy
+            try:
+                if check_for_push():
+                    log("📤 Pushed local changes to cloud.")
+                    restart_needed = True
+            except: pass
+
             if restart_needed:
                 bots = start_all_bots()
-                send_discord_msg(f"♻️ System synced and bots restarted.\nActive: {', '.join(bots)}")
+                queue_discord_msg(f"♻️ System synced and bots restarted.\nActive: {', '.join(bots)}")
 
             now = datetime.datetime.now()
             if now.hour == DAILY_REPORT_HOUR and last_report_date != now.date():
                 status_msg = f"Good morning! \nTime: {now.strftime('%c')}\nActive Bots: {len(bots)}\nSystem is healthy."
-                send_discord_msg(status_msg)
+                queue_discord_msg(status_msg)
                 last_report_date = now.date()
                 
         except Exception as e:
