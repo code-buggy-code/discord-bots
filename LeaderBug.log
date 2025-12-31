@@ -8,3 +8,4 @@ Traceback (most recent call last):
     leader_data = await db.get_all_group_points(guild_id, group_key)
 AttributeError: 'DatabaseHandler' object has no attribute 'get_all_group_points'
 [2025-12-31 05:59:07] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 2bf0e15fe5bd8b10cdf4f57d41ece085.
+[2025-12-31 06:21:26] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 2bf0e15fe5bd8b10cdf4f57d41ece085.
