@@ -1,0 +1,9 @@
+[2025-12-31 00:49:29] [INFO    ] discord.client: logging in using static token
+[2025-12-31 00:49:30] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: 92c5c3f16c431d2b4f5607b8fe3dfa54).
+[2025-12-31 00:50:00] [ERROR   ] discord.ext.tasks: Unhandled exception in internal background task 'point_saver'.
+Traceback (most recent call last):
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/tasks/__init__.py", line 246, in _loop
+    await self.coro(*args, **kwargs)
+  File "main.py", line 431, in point_saver
+    leader_data = await db.get_all_group_points(guild_id, group_key)
+AttributeError: 'DatabaseHandler' object has no attribute 'get_all_group_points'
