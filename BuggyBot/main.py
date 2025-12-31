@@ -264,7 +264,9 @@ async def nightly_purge():
 
 async def check_token_expiry(is_startup=False):
     token_path = os.path.join(BASE_DIR, 'token.json')
-    if not os.path.exists(token_path): return
+    if not os.path.exists(token_path):
+        if is_startup: print("⚠️ Startup Check: token.json not found!")
+        return
     try:
         with open(token_path, 'r') as f:
             data = json.load(f)
@@ -276,10 +278,11 @@ async def check_token_expiry(is_startup=False):
                 elif days < 1: status = f"⚠️ **URGENT:** Expires in {int(time_left.total_seconds()/3600)}h!"
                 else: status = f"✅ Expires in {days} days."
                 
-                # Only log if it's the daily check, NOT startup (unless urgent)
-                if not is_startup:
-                    await send_log(f"📅 **Daily Check:** YouTube License Status: {status}")
-    except: pass
+                # RESTORED: We log this on startup again!
+                prefix = "🚀 **Bot Started:** " if is_startup else "📅 **Daily Check:** "
+                await send_log(f"{prefix}YouTube License Status: {status}")
+    except Exception as e:
+        print(f"Token Check Error: {e}")
 
 @bot.event
 async def on_ready():
@@ -299,7 +302,8 @@ async def on_ready():
     load_youtube_service()
     load_music_services()
     
-    # We do NOT run check_token_expiry(is_startup=True) anymore to avoid spam
+    # ✅ RESTORED: This will verify the timer immediately!
+    await check_token_expiry(is_startup=True)
     
     if not scheduler.running:
         scheduler.add_job(nightly_purge, CronTrigger(hour=3, minute=0, timezone='US/Eastern'))
@@ -533,6 +537,7 @@ async def purge(ctx, target: typing.Union[discord.Member, str], scope: typing.Un
             total += len(deleted)
         except: pass
     await ctx.send(f"✅ Deleted {total} messages.")
+    await send_log(f"🗑️ **Purge:** {ctx.author.name} deleted {total} messages.")
 
 @bot.command()
 async def help(ctx):
