@@ -1,0 +1,182 @@
+                await send_log(f"✅ Ticket created for **{after.name}**.")
+            except Exception as e:
+                await send_log(f"❌ Failed to create ticket: {e}")
+
+# --- COMMANDS ---
+
+@bot.command()
+@is_admin()
+async def sync(ctx):
+    """(Admin) Pulls changes from GitHub and restarts all bots."""
+    await ctx.send("♻️ **Syncing System...**\n1. Pulling code from GitHub...\n2. Restarting all bots (Give me 10 seconds!)")
+    os.system("git pull")
+    os.system("pkill -f main.py") # Kills everyone; Manager will revive them!
+
+@bot.command()
+@is_admin()
+async def setsetting(ctx, key: str = None, *, value: str = None):
+    if not key or not value: return await ctx.send("❌ Usage: `!setsetting <key> <value>`")
+    key = key.lower()
+    if key not in SIMPLE_SETTINGS: return await ctx.send(f"❌ Invalid key.")
+    try:
+        if SIMPLE_SETTINGS[key] == list: new_val = [clean_id(i) for i in value.split()]
+        elif SIMPLE_SETTINGS[key] == int: new_val = clean_id(value)
+        else: new_val = value
+        config[key] = new_val
+        await save_config_to_db()
+        await ctx.send(f"✅ Saved `{key}` as `{new_val}`.")
+    except: await ctx.send("❌ Error: Check value.")
+
+@bot.command()
+@is_admin()
+async def addsetting(ctx, key: str = None, *, value: str = None):
+    if not key or not value: return await ctx.send("❌ Usage: `!addsetting <key> <value>`")
+    key = key.lower()
+    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await ctx.send("❌ Not a list! Use `!setsetting`.")
+    try:
+        to_add = [clean_id(i) for i in value.split()]
+        count = 0
+        for item in to_add:
+            if item not in config[key]:
+                config[key].append(item)
+                count += 1
+        await save_config_to_db()
+        await ctx.send(f"✅ Added {count} items.")
+    except: await ctx.send("❌ Error.")
+
+@bot.command()
+@is_admin()
+async def removesetting(ctx, key: str = None, *, value: str = None):
+    if not key or not value: return await ctx.send("❌ Usage: `!removesetting <key> <value>`")
+    key = key.lower()
+    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await ctx.send("❌ Not a list!")
+    try:
+        to_remove = [clean_id(i) for i in value.split()]
+        count = 0
+        for item in to_remove:
+            if item in config[key]:
+                config[key].remove(item)
+                count += 1
+        await save_config_to_db()
+        await ctx.send(f"✅ Removed {count} items.")
+    except: await ctx.send("❌ Error.")
+
+@bot.command()
+@is_admin()
+async def showsettings(ctx):
+    text = "__**Bot Settings**__\n"
+    for k, v in config.items():
+        if k in SIMPLE_SETTINGS:
+            disp = f"`{v}`"
+            if k in CHANNEL_ID_KEYS and v != 0: disp = f"<#{v}>"
+            elif k in CHANNEL_LISTS: disp = " ".join([f"<#{x}>" for x in v]) if v else "None"
+            elif k in ROLE_ID_KEYS: disp = f"<@&{v}>"
+            elif k in ROLE_LISTS: disp = " ".join([f"<@&{x}>" for x in v]) if v else "None"
+            text += f"**{k}**: {disp}\n"
+    await ctx.send(text)
+
+@bot.command()
+@is_admin()
+async def refreshyoutube(ctx):
+    global auth_flow
+    secret_path = os.path.join(BASE_DIR, 'client_secret.json')
+    if not os.path.exists(secret_path): return await ctx.send("❌ Missing `client_secret.json`!")
+    try:
+        auth_flow = Flow.from_client_secrets_file(secret_path, scopes=['https://www.googleapis.com/auth/youtube'], redirect_uri='urn:ietf:wg:oauth:2.0:oob')
+        auth_url, _ = auth_flow.authorization_url(prompt='consent')
+        await ctx.send(f"🔄 **Renewal Started!**\n1. Click: <{auth_url}>\n2. Type: `!entercode YOUR_CODE`")
+    except Exception as e: await ctx.send(f"❌ Error: {e}")
+
+@bot.command()
+@is_admin()
+async def entercode(ctx, code: str):
+    global auth_flow
+    if not auth_flow: return await ctx.send("❌ Run `!refreshyoutube` first!")
+    try:
+        auth_flow.fetch_token(code=code)
+        token_path = os.path.join(BASE_DIR, 'token.json')
+        with open(token_path, 'w') as token: token.write(auth_flow.credentials.to_json())
+        load_youtube_service()
+        await check_token_expiry()
+        await ctx.send("✅ **Success!** License renewed.")
+    except Exception as e: await ctx.send(f"❌ Error: {e}")
+
+@bot.command()
+@is_admin()
+async def stick(ctx, *, text: str):
+    msg = await ctx.send(text)
+    sticky_data[ctx.channel.id] = [text, msg.id, datetime.datetime.utcnow().timestamp()]
+    await db.save_sticky(ctx.channel.id, text, msg.id, sticky_data[ctx.channel.id][2])
+    try: await ctx.message.delete()
+    except: pass
+
+@bot.command()
+@is_admin()
+async def unstick(ctx):
+    if ctx.channel.id in sticky_data:
+        sticky_data.pop(ctx.channel.id)
+        await db.delete_sticky(ctx.channel.id)
+        await ctx.send("✅ Removed.")
+
+@bot.command()
+@is_admin()
+async def purge(ctx, target: typing.Union[discord.Member, str], scope: typing.Union[discord.TextChannel, discord.CategoryChannel, str] = None):
+    chans = []
+    if scope is None or scope == "channel": chans = [ctx.channel]
+    elif isinstance(scope, discord.TextChannel): chans = [scope]
+    elif isinstance(scope, discord.CategoryChannel): chans = scope.text_channels
+    elif isinstance(scope, str) and scope.lower() == "server": chans = ctx.guild.text_channels
+    await ctx.send(f"🧹 Purging...")
+    total = 0
+    def check(msg):
+        if msg.pinned: return False
+        if msg.channel.id in sticky_data and msg.id == sticky_data[msg.channel.id][1]: return False
+        if isinstance(target, discord.Member): return msg.author == target
+        return True
+    for c in chans:
+        try:
+            deleted = await c.purge(limit=None, check=check)
+            total += len(deleted)
+        except: pass
+    await ctx.send(f"✅ Deleted {total} messages.")
+
+@bot.command()
+async def help(ctx):
+    embed = discord.Embed(title="BuggyBot Help", color=discord.Color.blue())
+    embed.add_field(name="⚙️ Settings", value="`!setsetting`, `!addsetting`, `!removesetting`, `!showsettings`", inline=False)
+    embed.add_field(name="📌 Sticky", value="`!stick`, `!unstick`", inline=False)
+    embed.add_field(name="♻️ System", value="`!sync` (Update & Restart)", inline=False)
+    embed.add_field(name="📺 YouTube", value="`!refreshyoutube`, `!entercode`", inline=False)
+    embed.add_field(name="🧹 Purge", value="`!purge <user/all> <channel/category/server>`", inline=False)
+    await ctx.send(embed=embed)
+
+@bot.event
+async def on_message(message):
+    if message.author.bot: return
+    if message.channel.id in sticky_data:
+        content, last_id, last_time = sticky_data[message.channel.id]
+        if isinstance(last_time, datetime.datetime): last_time = last_time.timestamp()
+        if datetime.datetime.utcnow().timestamp() - last_time > config['sticky_delay_seconds']:
+            try:
+                if last_id:
+                    try: m = await message.channel.fetch_message(last_id); await m.delete()
+                    except: pass
+                new_msg = await message.channel.send(content)
+                sticky_data[message.channel.id][1] = new_msg.id
+                sticky_data[message.channel.id][2] = datetime.datetime.utcnow().timestamp()
+                await db.save_sticky(message.channel.id, content, new_msg.id, sticky_data[message.channel.id][2])
+            except: pass
+    if config['music_channel_id'] != 0 and message.channel.id == config['music_channel_id']:
+        if "open.spotify.com" in message.content:
+             res = await asyncio.to_thread(process_spotify_link, message.content)
+             if res: await message.channel.send(res)
+        elif youtube:
+            v_id = None
+            if "v=" in message.content: v_id = message.content.split("v=")[1].split("&")[0]
+            elif "youtu.be/" in message.content: v_id = message.content.split("youtu.be/")[1].split("?")[0]
+            if v_id:
+                try: youtube.playlistItems().insert(part="snippet", body={"snippet": {"playlistId": config['playlist_id'], "resourceId": {"kind": "youtube#video", "videoId": v_id}}}).execute(); await message.add_reaction("🎵")
+                except: pass
+    await bot.process_commands(message)
+
+bot.run(TOKEN)

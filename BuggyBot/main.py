@@ -1,6 +1,7 @@
 import sys
 sys.path.append('..')
-# SAFE IMPORT: Won't crash if keys are missing
+
+# --- SAFE IMPORTS (Prevents crashes if keys missing) ---
 try:
     from secret_bot import TOKEN, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 except ImportError:
@@ -29,9 +30,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 # --- CONFIGURATION ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_NAME = "BuggyBotDB"
-
-# MAILBOX FILE: This is where Manager.py leaves notes!
-IPC_FILE = os.path.join(BASE_DIR, "pending_logs.json") 
+IPC_FILE = os.path.join(BASE_DIR, "pending_logs.json") # Mailbox File
 
 DEFAULT_CONFIG = {
     "log_channel_id": 0,
@@ -173,8 +172,7 @@ def load_youtube_service():
                 try:
                     creds.refresh(Request())
                     with open(token_path, 'w') as token: token.write(creds.to_json())
-                except:
-                    return False
+                except: return False
             if creds and not creds.expired:
                 youtube = build('youtube', 'v3', credentials=creds)
                 return True
@@ -225,25 +223,21 @@ async def send_log(text):
         await channel.send(f"`[{timestamp}]` 📝 {text}")
 
 # --- TASKS ---
+
 # 1. MAILBOX READER (Reads logs from Manager)
 @tasks.loop(seconds=5)
 async def check_manager_logs():
     if config['log_channel_id'] == 0: return
-
     if os.path.exists(IPC_FILE):
         try:
             with open(IPC_FILE, "r") as f:
                 queue = json.load(f)
-            
             if queue:
                 channel = bot.get_channel(config['log_channel_id'])
                 if channel:
                     for msg in queue:
-                        # Format it nicely as a block
                         await channel.send(msg)
                         await asyncio.sleep(1) 
-                
-                # Clear the mailbox
                 with open(IPC_FILE, "w") as f:
                     json.dump([], f)
         except Exception as e:
@@ -305,7 +299,9 @@ async def on_ready():
 
     load_youtube_service()
     load_music_services()
-    await check_token_expiry(is_startup=True)
+    
+    # NOTE: Startup check removed (as requested). Only scheduled check runs.
+    
     if not scheduler.running:
         scheduler.add_job(nightly_purge, CronTrigger(hour=3, minute=0, timezone='US/Eastern'))
         scheduler.add_job(check_token_expiry, CronTrigger(hour=4, minute=0, timezone='US/Eastern'))
@@ -313,6 +309,7 @@ async def on_ready():
     await send_log("Bot is online and ready!")
 
 # --- EVENTS ---
+
 @bot.event
 async def on_raw_reaction_add(payload):
     if payload.user_id == bot.user.id: return
@@ -371,7 +368,36 @@ async def sync(ctx):
     """(Admin) Pulls changes from GitHub and restarts all bots."""
     await ctx.send("♻️ **Syncing System...**\n1. Pulling code from GitHub...\n2. Restarting all bots (Give me 10 seconds!)")
     os.system("git pull")
-    os.system("pkill -f main.py") # Kills everyone; Manager will revive them!
+    os.system("pkill -f main.py")
+
+@bot.command()
+@is_admin()
+async def checkyoutube(ctx):
+    """(Admin) Manually checks the YouTube license status."""
+    token_path = os.path.join(BASE_DIR, 'token.json')
+    if not os.path.exists(token_path):
+        return await ctx.send("⚠️ **License Error:** `token.json` is missing!")
+    
+    try:
+        with open(token_path, 'r') as f:
+            data = json.load(f)
+            if 'expiry' in data:
+                expiry_time = datetime.datetime.strptime(data['expiry'][:19], "%Y-%m-%dT%H:%M:%S")
+                time_left = expiry_time - datetime.datetime.utcnow()
+                days = time_left.days
+                
+                if time_left.total_seconds() <= 0:
+                    status = "❌ **EXPIRED**"
+                elif days < 1:
+                    status = f"⚠️ **URGENT:** Expires in {int(time_left.total_seconds()/3600)}h!"
+                else:
+                    status = f"✅ Expires in {days} days."
+                
+                await ctx.send(f"📅 **Manual Check:** YouTube License Status: {status}")
+            else:
+                await ctx.send("❓ Token file found, but no expiry date inside.")
+    except Exception as e:
+        await ctx.send(f"❌ Error checking token: {e}")
 
 @bot.command()
 @is_admin()
@@ -481,6 +507,15 @@ async def unstick(ctx):
 
 @bot.command()
 @is_admin()
+async def liststickies(ctx):
+    if not sticky_data: return await ctx.send("❌ No stickies.")
+    text = "**Active Stickies:**\n"
+    for cid, data in sticky_data.items():
+        text += f"<#{cid}>: {data[0][:50]}...\n"
+    await ctx.send(text)
+
+@bot.command()
+@is_admin()
 async def purge(ctx, target: typing.Union[discord.Member, str], scope: typing.Union[discord.TextChannel, discord.CategoryChannel, str] = None):
     chans = []
     if scope is None or scope == "channel": chans = [ctx.channel]
@@ -500,20 +535,27 @@ async def purge(ctx, target: typing.Union[discord.Member, str], scope: typing.Un
             total += len(deleted)
         except: pass
     await ctx.send(f"✅ Deleted {total} messages.")
+    await send_log(f"🗑️ **Purge:** {ctx.author.name} deleted {total} messages.")
 
 @bot.command()
 async def help(ctx):
     embed = discord.Embed(title="BuggyBot Help", color=discord.Color.blue())
     embed.add_field(name="⚙️ Settings", value="`!setsetting`, `!addsetting`, `!removesetting`, `!showsettings`", inline=False)
-    embed.add_field(name="📌 Sticky", value="`!stick`, `!unstick`", inline=False)
+    embed.add_field(name="📌 Sticky", value="`!stick`, `!unstick`, `!liststickies`", inline=False)
     embed.add_field(name="♻️ System", value="`!sync` (Update & Restart)", inline=False)
-    embed.add_field(name="📺 YouTube", value="`!refreshyoutube`, `!entercode`", inline=False)
+    embed.add_field(name="📺 YouTube", value="`!refreshyoutube`, `!entercode`, `!checkyoutube`", inline=False)
     embed.add_field(name="🧹 Purge", value="`!purge <user/all> <channel/category/server>`", inline=False)
+    embed.add_field(name="🎵 Music", value="Paste Spotify link in music channel!", inline=False)
     await ctx.send(embed=embed)
 
 @bot.event
 async def on_message(message):
     if message.author.bot: return
+    if message.type == discord.MessageType.pins_add: 
+        try: await message.delete()
+        except: pass
+        return
+
     if message.channel.id in sticky_data:
         content, last_id, last_time = sticky_data[message.channel.id]
         if isinstance(last_time, datetime.datetime): last_time = last_time.timestamp()
@@ -539,5 +581,10 @@ async def on_message(message):
                 try: youtube.playlistItems().insert(part="snippet", body={"snippet": {"playlistId": config['playlist_id'], "resourceId": {"kind": "youtube#video", "videoId": v_id}}}).execute(); await message.add_reaction("🎵")
                 except: pass
     await bot.process_commands(message)
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, (commands.CommandNotFound, commands.CheckFailure)): return
+    await ctx.send(f"⚠️ **Error:** `{error}`")
 
 bot.run(TOKEN)
