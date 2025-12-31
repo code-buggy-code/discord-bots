@@ -39,20 +39,20 @@ def start_all_bots():
         folder_path = os.path.join(ROOT_DIR, item)
         if os.path.isdir(folder_path) and "main.py" in os.listdir(folder_path):
             
+            # 1. Calculate the FULL PATH
             script_path = os.path.join(folder_path, "main.py")
             
-            # --- THE FIX ---
-            # We add "| grep -v grep" to ignore the search command itself!
+            # 2. Check if the FULL PATH is running (Ignore the grep command itself)
             check = subprocess.getoutput(f"ps -ef | grep '{script_path}' | grep -v grep")
             
-            # Now, if 'check' is empty, it means the bot is TRULY dead.
             if check:
                 active_bots.append(item)
             else:
-                # It is dead! Revive it.
+                # 3. Start using the FULL PATH (The Fix!)
                 log(f"⚡ (Re)starting {item}...")
                 os.chdir(folder_path)
-                os.system(f"nohup python3 main.py > ../{item}.log 2>&1 &")
+                # We use {script_path} here so the process list shows the full name
+                os.system(f"nohup python3 {script_path} > ../{item}.log 2>&1 &")
                 active_bots.append(item)
                 os.chdir(ROOT_DIR)
             
@@ -64,7 +64,6 @@ def check_for_push():
     status = subprocess.getoutput("git status --porcelain")
     
     if status:
-        # We just save the data, we do NOT restart the bots!
         log("💾 Local changes detected. Backing up to GitHub (Quietly)...")
         os.system("git add .")
         os.system('git commit -m "Auto-sync by Manager"')
@@ -72,23 +71,21 @@ def check_for_push():
 
 # --- MAIN LOOP ---
 if __name__ == "__main__":
-    # We don't kill everyone on startup anymore, just check who is missing.
-    bots = start_all_bots()
+    # Kill old processes so we can start fresh with full paths
+    os.system("pkill -f main.py")
+    time.sleep(2)
     
+    bots = start_all_bots()
     log(f"✅ Fixed Manager Started. Active: {', '.join(bots)}")
-    queue_discord_msg(f"👀 **Manager Online:** I can now see who is actually dead!")
+    queue_discord_msg(f"👀 **Manager Online:** Loop fixed! I am tracking full paths now.")
     
     last_report_date = None
 
     while True:
         try:
-            # 1. Watchdog: Keep them alive
             bots = start_all_bots()
-
-            # 2. Backup: Save data without killing bots
             check_for_push()
 
-            # 3. Daily Report (4 AM)
             now = datetime.datetime.now()
             if now.hour == DAILY_REPORT_HOUR and last_report_date != now.date():
                 status_msg = f"Good morning! \nTime: {now.strftime('%c')}\nActive Bots: {len(bots)}\nSystem is healthy."
