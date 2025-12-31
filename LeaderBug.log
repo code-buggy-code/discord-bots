@@ -37,3 +37,5 @@ Traceback (most recent call last):
 discord.ext.commands.errors.BadArgument: Converting to "int" failed for parameter "category_id".
 [2025-12-31 06:51:20] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command None
 discord.ext.commands.errors.CommandNotFound: Command "trackcategory1433926375454277663" is not found
+[2025-12-31 06:52:06] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command None
+discord.ext.commands.errors.CommandNotFound: Command "showsettings" is not found
