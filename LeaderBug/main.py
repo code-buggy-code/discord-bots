@@ -74,7 +74,7 @@ class DatabaseHandler:
             with open(self.file_path, "r") as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {"bot_config": [], "sticky_messages": []}
+            return {"bot_config": [], "sticky_messages": [], "user_points": []}
 
     def _save_to_file(self):
         with open(self.file_path, "w") as f:
@@ -122,6 +122,56 @@ class DatabaseHandler:
         collection = [d for d in collection if d.get("_id") != channel_id]
         self.data["sticky_messages"] = collection
         self._save_to_file()
+
+    # --- NEW METHODS FOR LEADERBUG ---
+    async def update_user_points(self, guild_id, group_key, user_id, points):
+        user_id = str(user_id)
+        guild_id = str(guild_id)
+        collection = self.data.get("user_points", [])
+        
+        found = False
+        for doc in collection:
+            if doc.get("guild_id") == guild_id and \
+               doc.get("group_key") == group_key and \
+               doc.get("user_id") == user_id:
+                doc["points"] = int(doc.get("points", 0)) + int(points)
+                found = True
+                break
+        
+        if not found:
+            new_doc = {
+                "guild_id": guild_id,
+                "group_key": group_key,
+                "user_id": user_id,
+                "points": int(points)
+            }
+            collection.append(new_doc)
+            
+        self.data["user_points"] = collection
+        self._save_to_file()
+
+    async def get_all_group_points(self, guild_id, group_key):
+        guild_id = str(guild_id)
+        collection = self.data.get("user_points", [])
+        results = {}
+        for doc in collection:
+            if doc.get("guild_id") == guild_id and doc.get("group_key") == group_key:
+                results[doc["user_id"]] = doc.get("points", 0)
+        return results
+
+    async def clear_points_by_group(self, guild_id, group_key):
+        guild_id = str(guild_id)
+        collection = self.data.get("user_points", [])
+        initial_count = len(collection)
+        
+        new_collection = [
+            doc for doc in collection 
+            if not (doc.get("guild_id") == guild_id and doc.get("group_key") == group_key)
+        ]
+        
+        self.data["user_points"] = new_collection
+        self._save_to_file()
+        return initial_count - len(new_collection)
 
 async def load_initial_config():
     """Loads initial configuration from MongoDB."""
@@ -740,6 +790,26 @@ async def show_points(ctx):
     embed.set_footer(text=f"Change a value using {PREFIX}setpoints <activity> <value>")
     await ctx.send(embed=embed)
 
+@bot.command(name='showsettings')
+@commands.has_permissions(administrator=True)
+async def show_settings_cmd(ctx):
+    """^showsettings: Displays the current bot configuration."""
+    embed = discord.Embed(title="⚙️ LeaderBug Settings", color=discord.Color.blue())
+    
+    # Groups
+    groups_desc = ""
+    for key, data in LEADERBOARD_GROUPS.items():
+        cats = ", ".join([f"<#{c}>" for c in data['categories']]) if data['categories'] else "None"
+        groups_desc += f"**{key}** ({data['name']}):\nCategories: {cats}\n\n"
+    
+    if not groups_desc: groups_desc = "No groups configured."
+    embed.add_field(name="🏆 Leaderboard Groups", value=groups_desc, inline=False)
+    
+    # VC Role
+    vc_role = f"<@&{VC_NOTIFY_ROLE_ID}>" if VC_NOTIFY_ROLE_ID else "None"
+    embed.add_field(name="🔊 VC Notify Role", value=vc_role, inline=False)
+    
+    await ctx.send(embed=embed)
 
 @bot.command(name='setpoints')
 @commands.has_permissions(administrator=True) 
