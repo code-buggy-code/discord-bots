@@ -1,39 +1,61 @@
 import json
 import os
+import urllib.request
 
-# --- PASTE YOUR LOG CHANNEL ID HERE ---
-NEW_LOG_CHANNEL_ID = 1434622477660717056  # <--- REPLACE THIS NUMBER!
+# 1. Load the Token
+try:
+    from BuggyBot.secret_bot import TOKEN
+    print("✅ Found Token.")
+except:
+    print("❌ Error: Could not find BuggyBot/secret_bot.py")
+    exit()
 
-# Path to BuggyBot's database
+# 2. Who am I? (Check the Bot Identity)
+print("🔎 Checking Bot Identity...")
+req = urllib.request.Request("https://discord.com/api/v9/users/@me", headers={"Authorization": f"Bot {TOKEN}"})
+try:
+    with urllib.request.urlopen(req) as response:
+        data = json.load(response)
+        print(f"🤖 I am logged in as: {data['username']}#{data['discriminator']}")
+        print(f"🆔 My Bot ID is: {data['id']}")
+except urllib.error.HTTPError as e:
+    print(f"❌ Token Error: {e}")
+    exit()
+
+# 3. Where am I sending logs? (Check Database)
 db_path = os.path.join("BuggyBot", "database.json")
+target_channel = None
 
 if os.path.exists(db_path):
     with open(db_path, "r") as f:
-        data = json.load(f)
-
-    # Find the config section
-    config_list = data.get("bot_config", [])
-    found = False
+        db_data = json.load(f)
     
+    config_list = db_data.get("bot_config", [])
     for doc in config_list:
         if doc.get("_id") == "config":
-            old_id = doc.get("log_channel_id", "Unknown")
-            print(f"Found old Log Channel ID: {old_id}")
-            
-            # Update it
-            doc["log_channel_id"] = NEW_LOG_CHANNEL_ID
-            found = True
+            target_channel = doc.get("log_channel_id")
             break
-    
-    if not found:
-        print("Config not found, creating new entry...")
-        config_list.append({"_id": "config", "log_channel_id": NEW_LOG_CHANNEL_ID})
-        data["bot_config"] = config_list
 
-    # Save back to file
-    with open(db_path, "w") as f:
-        json.dump(data, f, indent=4, default=str)
+print(f"📂 Database says Log Channel ID is: {target_channel}")
+
+# 4. Test the Connection
+if target_channel:
+    print(f"📨 Trying to send a test message to {target_channel}...")
+    url = f"https://discord.com/api/v9/channels/{target_channel}/messages"
+    headers = {"Authorization": f"Bot {TOKEN}", "Content-Type": "application/json"}
+    data = {"content": "🔍 Detective Test Message"}
     
-    print(f"✅ SUCCESS! Log Channel updated to: {NEW_LOG_CHANNEL_ID}")
+    try:
+        req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers=headers)
+        urllib.request.urlopen(req)
+        print("✅ SUCCESS! Message sent. The Manager should work now.")
+    except urllib.error.HTTPError as e:
+        print(f"❌ FAILED: {e}")
+        if e.code == 403:
+            print("💡 TIP: Error 403 means 'Forbidden'.")
+            print("   1. Check if the Channel ID above is correct.")
+            print("   2. Check if the Bot User (listed above) is actually in that server.")
+        if e.code == 404:
+            print("💡 TIP: Error 404 means 'Not Found'. That Channel ID does not exist!")
 else:
-    print(f"❌ Error: Could not find {db_path}")
+    print("❌ No Log Channel ID found in database!")
