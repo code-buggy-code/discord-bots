@@ -18,7 +18,6 @@ IPC_FILE = os.path.join(ROOT_DIR, "BuggyBot", "pending_logs.json")
 def log(message):
     print(f"[{time.strftime('%H:%M:%S')}] {message}")
 
-# 1. WRITE to the Mailbox (Hand log to BuggyBot)
 def queue_discord_msg(content):
     queue = []
     if os.path.exists(IPC_FILE):
@@ -32,33 +31,28 @@ def queue_discord_msg(content):
     with open(IPC_FILE, "w") as f:
         json.dump(queue, f)
 
-# 2. Start Bots (The Watchdog)
 def start_all_bots():
     active_bots = []
     for item in os.listdir(ROOT_DIR):
         folder_path = os.path.join(ROOT_DIR, item)
         if os.path.isdir(folder_path) and "main.py" in os.listdir(folder_path):
             
-            # 1. Calculate the FULL PATH
             script_path = os.path.join(folder_path, "main.py")
             
-            # 2. Check if the FULL PATH is running (Ignore the grep command itself)
+            # THE FIX: Ignore our own grep process so we don't trick ourselves!
             check = subprocess.getoutput(f"ps -ef | grep '{script_path}' | grep -v grep")
             
             if check:
                 active_bots.append(item)
             else:
-                # 3. Start using the FULL PATH (The Fix!)
                 log(f"⚡ (Re)starting {item}...")
                 os.chdir(folder_path)
-                # We use {script_path} here so the process list shows the full name
                 os.system(f"nohup python3 {script_path} > ../{item}.log 2>&1 &")
                 active_bots.append(item)
                 os.chdir(ROOT_DIR)
             
     return active_bots
 
-# 3. Check for Local Changes (Quiet Backup)
 def check_for_push():
     os.chdir(ROOT_DIR)
     status = subprocess.getoutput("git status --porcelain")
@@ -77,7 +71,7 @@ if __name__ == "__main__":
     
     bots = start_all_bots()
     log(f"✅ Fixed Manager Started. Active: {', '.join(bots)}")
-    queue_discord_msg(f"👀 **Manager Online:** Loop fixed! I am tracking full paths now.")
+    queue_discord_msg(f"👀 **Manager Online:** I see you, and I am ready!")
     
     last_report_date = None
 
