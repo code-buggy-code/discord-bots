@@ -1,4 +1,13 @@
 /home/ubuntu/.local/lib/python3.8/site-packages/google/api_core/_python_version_support.py:237: FutureWarning: You are using a non-supported Python version (3.8.10). Google will not post any further updates to google.api_core supporting this Python version. Please upgrade to the latest Python version, or at least Python 3.10, and then update google.api_core.
   warnings.warn(message, FutureWarning)
-[2025-12-31 02:49:34] [INFO    ] discord.client: logging in using static token
-[2025-12-31 02:49:35] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: 954aa2aa8f82f239f36ce2d9000b1b70).
+[2025-12-31 02:49:44] [INFO    ] discord.client: logging in using static token
+[2025-12-31 02:49:45] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: 8ac8b2c599d92e747f5842f17f4f40c0).
+[2025-12-31 02:49:45] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command refreshyoutube
+Traceback (most recent call last):
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/bot.py", line 1376, in invoke
+    await ctx.command.invoke(ctx)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/core.py", line 1056, in invoke
+    await self.prepare(ctx)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/core.py", line 961, in prepare
+    raise CheckFailure(f'The check functions for command {self.qualified_name} failed.')
+discord.ext.commands.errors.CheckFailure: The check functions for command refreshyoutube failed.
