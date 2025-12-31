@@ -1,6 +1,5 @@
 import sys
 sys.path.append('..')
-# Safer import: won't crash if music keys are missing
 try:
     from secret_bot import TOKEN, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 except ImportError:
@@ -9,7 +8,7 @@ except ImportError:
     SPOTIFY_CLIENT_SECRET = None
 
 import discord
-from discord.ext import commands, tasks # Added 'tasks' for the loop!
+from discord.ext import commands, tasks
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from google.oauth2.credentials import Credentials
@@ -29,7 +28,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 # --- CONFIGURATION ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_NAME = "BuggyBotDB"
-IPC_FILE = os.path.join(BASE_DIR, "pending_logs.json") # <--- The Mailbox File
+IPC_FILE = os.path.join(BASE_DIR, "pending_logs.json")
 
 DEFAULT_CONFIG = {
     "log_channel_id": 0,
@@ -171,8 +170,7 @@ def load_youtube_service():
                 try:
                     creds.refresh(Request())
                     with open(token_path, 'w') as token: token.write(creds.to_json())
-                except:
-                    return False
+                except: return False
             if creds and not creds.expired:
                 youtube = build('youtube', 'v3', credentials=creds)
                 return True
@@ -222,26 +220,20 @@ async def send_log(text):
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         await channel.send(f"`[{timestamp}]` 📝 {text}")
 
-# --- NEW: MAILBOX READER TASK ---
+# --- MAILBOX READER TASK ---
 @tasks.loop(seconds=5)
 async def check_manager_logs():
-    """Checks the 'pending_logs.json' file for messages from Manager.py"""
     if config['log_channel_id'] == 0: return
-
     if os.path.exists(IPC_FILE):
         try:
             with open(IPC_FILE, "r") as f:
                 queue = json.load(f)
-            
             if queue:
                 channel = bot.get_channel(config['log_channel_id'])
                 if channel:
                     for msg in queue:
-                        # Send the message!
                         await channel.send(msg)
                         await asyncio.sleep(1) 
-                
-                # Clear the mailbox now that we sent them
                 with open(IPC_FILE, "w") as f:
                     json.dump([], f)
         except Exception as e:
@@ -275,7 +267,6 @@ async def on_ready():
         print(f"Database Connection Error: {e}")
     print(f"Hello! I am logged in as {bot.user}")
     
-    # START THE MAILBOX CHECKER
     if not check_manager_logs.is_running():
         check_manager_logs.start()
         print("📬 Mailbox Reader Started!")
@@ -296,7 +287,70 @@ async def sync(ctx):
     """(Admin) Pulls changes from GitHub and restarts all bots."""
     await ctx.send("♻️ **Syncing System...**\n1. Pulling code from GitHub...\n2. Restarting all bots (Give me 10 seconds!)")
     os.system("git pull")
-    os.system("pkill -f main.py") # Kills everyone; Manager will revive them!
+    os.system("pkill -f main.py") 
+
+@bot.command()
+@is_admin()
+async def setsetting(ctx, key: str = None, *, value: str = None):
+    if not key or not value: return await ctx.send("❌ Usage: `!setsetting <key> <value>`")
+    key = key.lower()
+    if key not in SIMPLE_SETTINGS: return await ctx.send(f"❌ Invalid key.")
+    try:
+        if SIMPLE_SETTINGS[key] == list: new_val = [clean_id(i) for i in value.split()]
+        elif SIMPLE_SETTINGS[key] == int: new_val = clean_id(value)
+        else: new_val = value
+        config[key] = new_val
+        await save_config_to_db()
+        await ctx.send(f"✅ Saved `{key}` as `{new_val}`.")
+    except: await ctx.send("❌ Error: Check value.")
+
+@bot.command()
+@is_admin()
+async def addsetting(ctx, key: str = None, *, value: str = None):
+    if not key or not value: return await ctx.send("❌ Usage: `!addsetting <key> <value>`")
+    key = key.lower()
+    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await ctx.send("❌ Not a list! Use `!setsetting`.")
+    try:
+        to_add = [clean_id(i) for i in value.split()]
+        count = 0
+        for item in to_add:
+            if item not in config[key]:
+                config[key].append(item)
+                count += 1
+        await save_config_to_db()
+        await ctx.send(f"✅ Added {count} items.")
+    except: await ctx.send("❌ Error.")
+
+@bot.command()
+@is_admin()
+async def removesetting(ctx, key: str = None, *, value: str = None):
+    if not key or not value: return await ctx.send("❌ Usage: `!removesetting <key> <value>`")
+    key = key.lower()
+    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await ctx.send("❌ Not a list!")
+    try:
+        to_remove = [clean_id(i) for i in value.split()]
+        count = 0
+        for item in to_remove:
+            if item in config[key]:
+                config[key].remove(item)
+                count += 1
+        await save_config_to_db()
+        await ctx.send(f"✅ Removed {count} items.")
+    except: await ctx.send("❌ Error.")
+
+@bot.command()
+@is_admin()
+async def showsettings(ctx):
+    text = "__**Bot Settings**__\n"
+    for k, v in config.items():
+        if k in SIMPLE_SETTINGS:
+            disp = f"`{v}`"
+            if k in CHANNEL_ID_KEYS and v != 0: disp = f"<#{v}>"
+            elif k in CHANNEL_LISTS: disp = " ".join([f"<#{x}>" for x in v]) if v else "None"
+            elif k in ROLE_ID_KEYS: disp = f"<@&{v}>"
+            elif k in ROLE_LISTS: disp = " ".join([f"<@&{x}>" for x in v]) if v else "None"
+            text += f"**{k}**: {disp}\n"
+    await ctx.send(text)
 
 @bot.command()
 @is_admin()
@@ -362,6 +416,16 @@ async def purge(ctx, target: typing.Union[discord.Member, str], scope: typing.Un
             total += len(deleted)
         except: pass
     await ctx.send(f"✅ Deleted {total} messages.")
+
+@bot.command()
+async def help(ctx):
+    embed = discord.Embed(title="BuggyBot Help", color=discord.Color.blue())
+    embed.add_field(name="⚙️ Settings", value="`!setsetting`, `!addsetting`, `!removesetting`, `!showsettings`", inline=False)
+    embed.add_field(name="📌 Sticky", value="`!stick`, `!unstick`", inline=False)
+    embed.add_field(name="♻️ System", value="`!sync` (Update & Restart)", inline=False)
+    embed.add_field(name="📺 YouTube", value="`!refreshyoutube`, `!entercode`", inline=False)
+    embed.add_field(name="🧹 Purge", value="`!purge <user/all> <channel/category/server>`", inline=False)
+    await ctx.send(embed=embed)
 
 @bot.event
 async def on_message(message):
