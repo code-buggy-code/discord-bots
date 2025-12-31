@@ -1,8 +1,6 @@
 import sys
 sys.path.append('..')
-
-# --- 1. INTEGRATION FIX: SAFE IMPORTS ---
-# This prevents crashes if secret_bot.py is missing Spotify keys
+# SAFE IMPORT: Won't crash if keys are missing
 try:
     from secret_bot import TOKEN, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 except ImportError:
@@ -11,7 +9,7 @@ except ImportError:
     SPOTIFY_CLIENT_SECRET = None
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from google.oauth2.credentials import Credentials
@@ -24,26 +22,17 @@ import os
 import json
 import re
 import typing
-
-# --- NEW IMPORTS FOR MUSIC ---
 from ytmusicapi import YTMusic
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyClientCredentials
 
-# ==========================================
-#              FUNCTION LIST
-# ==========================================
-# Includes: DatabaseHandler, Music Services, Tickets, Bans, Stickies, Purge
-# ==========================================
-
-# --- 2. CONFIGURATION & DATABASE SETTINGS ---
+# --- CONFIGURATION ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 DB_NAME = "BuggyBotDB"
-CONFIG_COLLECTION = "bot_config"
-STICKY_COLLECTION = "sticky_messages" 
 
-# Default configuration
+# MAILBOX FILE: This is where Manager.py leaves notes!
+IPC_FILE = os.path.join(BASE_DIR, "pending_logs.json") 
+
 DEFAULT_CONFIG = {
     "log_channel_id": 0,
     "nightly_channels": [],
@@ -92,7 +81,7 @@ auth_flow = None
 ytmusic = None
 spotify = None
 
-# --- 3. DATABASE HANDLER (LOCAL FILE VERSION) ---
+# --- DATABASE HANDLER ---
 class DatabaseHandler:
     def __init__(self, uri, db_name):
         self.file_path = "database.json"
@@ -172,7 +161,7 @@ def is_admin():
         return any(role.id in config['admin_role_id'] for role in ctx.author.roles)
     return commands.check(predicate)
 
-# --- 4. YOUTUBE & SPOTIFY SETUP ---
+# --- MUSIC SETUP ---
 def load_youtube_service():
     global youtube
     youtube = None
@@ -185,35 +174,26 @@ def load_youtube_service():
                     creds.refresh(Request())
                     with open(token_path, 'w') as token: token.write(creds.to_json())
                 except:
-                    print("⚠️ Token expired and refresh failed.")
                     return False
             if creds and not creds.expired:
                 youtube = build('youtube', 'v3', credentials=creds)
                 return True
         return False
-    except Exception as e:
-        print(f"YouTube Service Error: {e}")
-        return False
+    except: return False
 
 def load_music_services():
     global ytmusic, spotify
-    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
-        print("⚠️ Missing Spotify Keys. Music skipped.")
-        return
+    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET: return
     try:
         sp_auth = SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET)
         spotify = Spotify(auth_manager=sp_auth)
-        print("✅ Spotify Connected!")
-    except Exception as e:
-        print(f"⚠️ Spotify Error: {e}")
+    except: pass
     
     browser_path = os.path.join(BASE_DIR, 'browser.json')
     try:
         if os.path.exists(browser_path):
             ytmusic = YTMusic(browser_path)
-            print("✅ YouTube Music Connected!")
-    except Exception as e:
-        print(f"⚠️ YouTube Music Error: {e}")
+    except: pass
 
 def process_spotify_link(url):
     if not spotify or not ytmusic: return None
@@ -229,12 +209,10 @@ def process_spotify_link(url):
             song_id = search_results[0]['videoId']
             ytmusic.add_playlist_items(config['playlist_id'], [song_id])
             return f"🎶 Added **{title}** by **{artist}** to the playlist!"
-    except Exception as e:
-        print(f"Music Processing Error: {e}")
-        return None
+    except: return None
     return None
 
-# --- 5. BOT SETUP ---
+# --- BOT SETUP ---
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 scheduler = AsyncIOScheduler()
@@ -246,7 +224,31 @@ async def send_log(text):
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         await channel.send(f"`[{timestamp}]` 📝 {text}")
 
-# --- 6. TASKS ---
+# --- TASKS ---
+# 1. MAILBOX READER (Reads logs from Manager)
+@tasks.loop(seconds=5)
+async def check_manager_logs():
+    if config['log_channel_id'] == 0: return
+
+    if os.path.exists(IPC_FILE):
+        try:
+            with open(IPC_FILE, "r") as f:
+                queue = json.load(f)
+            
+            if queue:
+                channel = bot.get_channel(config['log_channel_id'])
+                if channel:
+                    for msg in queue:
+                        # Format it nicely as a block
+                        await channel.send(msg)
+                        await asyncio.sleep(1) 
+                
+                # Clear the mailbox
+                with open(IPC_FILE, "w") as f:
+                    json.dump([], f)
+        except Exception as e:
+            print(f"Log Read Error: {e}")
+
 async def nightly_purge():
     global is_purging
     is_purging = True
@@ -270,9 +272,7 @@ async def nightly_purge():
 
 async def check_token_expiry(is_startup=False):
     token_path = os.path.join(BASE_DIR, 'token.json')
-    if not os.path.exists(token_path):
-        if not is_startup: await send_log("⚠️ **License Error:** `token.json` is missing!")
-        return
+    if not os.path.exists(token_path): return
     try:
         with open(token_path, 'r') as f:
             data = json.load(f)
@@ -291,25 +291,28 @@ async def check_token_expiry(is_startup=False):
 async def on_ready():
     global db, sticky_data
     try:
-        db = DatabaseHandler("", DB_NAME)
+        db = DatabaseHandler(None, DB_NAME)
         await load_initial_config()
         sticky_data = await db.load_stickies()
     except Exception as e:
         print(f"Database Connection Error: {e}")
-
     print(f"Hello! I am logged in as {bot.user}")
+    
+    # START THE MAILBOX READER
+    if not check_manager_logs.is_running():
+        check_manager_logs.start()
+        print("📬 Mailbox Reader Started!")
+
     load_youtube_service()
     load_music_services()
     await check_token_expiry(is_startup=True)
-    
     if not scheduler.running:
         scheduler.add_job(nightly_purge, CronTrigger(hour=3, minute=0, timezone='US/Eastern'))
         scheduler.add_job(check_token_expiry, CronTrigger(hour=4, minute=0, timezone='US/Eastern'))
         scheduler.start()
-    
     await send_log("Bot is online and ready!")
 
-# --- 7. EVENTS ---
+# --- EVENTS ---
 @bot.event
 async def on_raw_reaction_add(payload):
     if payload.user_id == bot.user.id: return
@@ -360,17 +363,15 @@ async def on_member_update(before, after):
             except Exception as e:
                 await send_log(f"❌ Failed to create ticket: {e}")
 
-# --- 8. COMMANDS ---
+# --- COMMANDS ---
 
-# --- INTEGRATION FIX: SYNC COMMAND ---
 @bot.command()
 @is_admin()
 async def sync(ctx):
     """(Admin) Pulls changes from GitHub and restarts all bots."""
     await ctx.send("♻️ **Syncing System...**\n1. Pulling code from GitHub...\n2. Restarting all bots (Give me 10 seconds!)")
-    # This kills the process; the Manager (running separately) will revive it.
     os.system("git pull")
-    os.system("pkill -f main.py")
+    os.system("pkill -f main.py") # Kills everyone; Manager will revive them!
 
 @bot.command()
 @is_admin()
@@ -379,12 +380,9 @@ async def setsetting(ctx, key: str = None, *, value: str = None):
     key = key.lower()
     if key not in SIMPLE_SETTINGS: return await ctx.send(f"❌ Invalid key.")
     try:
-        if SIMPLE_SETTINGS[key] == list:
-            new_val = [clean_id(i) for i in value.split()]
-        elif SIMPLE_SETTINGS[key] == int:
-            new_val = clean_id(value)
-        else:
-            new_val = value
+        if SIMPLE_SETTINGS[key] == list: new_val = [clean_id(i) for i in value.split()]
+        elif SIMPLE_SETTINGS[key] == int: new_val = clean_id(value)
+        else: new_val = value
         config[key] = new_val
         await save_config_to_db()
         await ctx.send(f"✅ Saved `{key}` as `{new_val}`.")
@@ -395,8 +393,7 @@ async def setsetting(ctx, key: str = None, *, value: str = None):
 async def addsetting(ctx, key: str = None, *, value: str = None):
     if not key or not value: return await ctx.send("❌ Usage: `!addsetting <key> <value>`")
     key = key.lower()
-    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: 
-        return await ctx.send("❌ Not a list! Use `!setsetting` instead.")
+    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await ctx.send("❌ Not a list! Use `!setsetting`.")
     try:
         to_add = [clean_id(i) for i in value.split()]
         count = 0
@@ -413,8 +410,7 @@ async def addsetting(ctx, key: str = None, *, value: str = None):
 async def removesetting(ctx, key: str = None, *, value: str = None):
     if not key or not value: return await ctx.send("❌ Usage: `!removesetting <key> <value>`")
     key = key.lower()
-    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list:
-        return await ctx.send("❌ Not a list!")
+    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await ctx.send("❌ Not a list!")
     try:
         to_remove = [clean_id(i) for i in value.split()]
         count = 0
@@ -485,27 +481,12 @@ async def unstick(ctx):
 
 @bot.command()
 @is_admin()
-async def liststickies(ctx):
-    if not sticky_data: return await ctx.send("❌ No stickies.")
-    text = "**Active Stickies:**\n"
-    for cid, data in sticky_data.items():
-        text += f"<#{cid}>: {data[0][:50]}...\n"
-    await ctx.send(text)
-
-@bot.command()
-@is_admin()
 async def purge(ctx, target: typing.Union[discord.Member, str], scope: typing.Union[discord.TextChannel, discord.CategoryChannel, str] = None):
     chans = []
     if scope is None or scope == "channel": chans = [ctx.channel]
     elif isinstance(scope, discord.TextChannel): chans = [scope]
     elif isinstance(scope, discord.CategoryChannel): chans = scope.text_channels
     elif isinstance(scope, str) and scope.lower() == "server": chans = ctx.guild.text_channels
-
-    if len(chans) > 1:
-        await ctx.send(f"⚠️ Purging {len(chans)} channels. Type `yes` to confirm.")
-        try: await bot.wait_for('message', check=lambda m: m.author == ctx.author and m.content.lower() == 'yes', timeout=15)
-        except asyncio.TimeoutError: return await ctx.send("❌ Cancelled.")
-
     await ctx.send(f"🧹 Purging...")
     total = 0
     def check(msg):
@@ -513,73 +494,50 @@ async def purge(ctx, target: typing.Union[discord.Member, str], scope: typing.Un
         if msg.channel.id in sticky_data and msg.id == sticky_data[msg.channel.id][1]: return False
         if isinstance(target, discord.Member): return msg.author == target
         return True
-
     for c in chans:
         try:
             deleted = await c.purge(limit=None, check=check)
             total += len(deleted)
         except: pass
     await ctx.send(f"✅ Deleted {total} messages.")
-    await send_log(f"🗑️ **Purge:** {ctx.author.name} deleted {total} messages.")
 
 @bot.command()
 async def help(ctx):
     embed = discord.Embed(title="BuggyBot Help", color=discord.Color.blue())
     embed.add_field(name="⚙️ Settings", value="`!setsetting`, `!addsetting`, `!removesetting`, `!showsettings`", inline=False)
-    embed.add_field(name="📌 Sticky", value="`!stick`, `!unstick`, `!liststickies`", inline=False)
+    embed.add_field(name="📌 Sticky", value="`!stick`, `!unstick`", inline=False)
     embed.add_field(name="♻️ System", value="`!sync` (Update & Restart)", inline=False)
     embed.add_field(name="📺 YouTube", value="`!refreshyoutube`, `!entercode`", inline=False)
     embed.add_field(name="🧹 Purge", value="`!purge <user/all> <channel/category/server>`", inline=False)
-    embed.add_field(name="🎵 Music", value="Paste Spotify link in music channel!", inline=False)
     await ctx.send(embed=embed)
 
-# --- 9. MESSAGE EVENTS ---
 @bot.event
 async def on_message(message):
     if message.author.bot: return
-    if message.type == discord.MessageType.pins_add: 
-        try: await message.delete()
-        except: pass
-        return
-
     if message.channel.id in sticky_data:
         content, last_id, last_time = sticky_data[message.channel.id]
         if isinstance(last_time, datetime.datetime): last_time = last_time.timestamp()
         if datetime.datetime.utcnow().timestamp() - last_time > config['sticky_delay_seconds']:
             try:
                 if last_id:
-                    try:
-                        m = await message.channel.fetch_message(last_id)
-                        await m.delete()
+                    try: m = await message.channel.fetch_message(last_id); await m.delete()
                     except: pass
                 new_msg = await message.channel.send(content)
                 sticky_data[message.channel.id][1] = new_msg.id
                 sticky_data[message.channel.id][2] = datetime.datetime.utcnow().timestamp()
                 await db.save_sticky(message.channel.id, content, new_msg.id, sticky_data[message.channel.id][2])
             except: pass
-
     if config['music_channel_id'] != 0 and message.channel.id == config['music_channel_id']:
         if "open.spotify.com" in message.content:
              res = await asyncio.to_thread(process_spotify_link, message.content)
-             if res:
-                 await message.channel.send(res)
-                 try: await message.add_reaction("🎵")
-                 except: pass
+             if res: await message.channel.send(res)
         elif youtube:
             v_id = None
             if "v=" in message.content: v_id = message.content.split("v=")[1].split("&")[0]
             elif "youtu.be/" in message.content: v_id = message.content.split("youtu.be/")[1].split("?")[0]
             if v_id:
-                try:
-                    youtube.playlistItems().insert(part="snippet", body={"snippet": {"playlistId": config['playlist_id'], "resourceId": {"kind": "youtube#video", "videoId": v_id}}}).execute()
-                    await message.add_reaction("🎵")
+                try: youtube.playlistItems().insert(part="snippet", body={"snippet": {"playlistId": config['playlist_id'], "resourceId": {"kind": "youtube#video", "videoId": v_id}}}).execute(); await message.add_reaction("🎵")
                 except: pass
-
     await bot.process_commands(message)
-
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, (commands.CommandNotFound, commands.CheckFailure)): return
-    await ctx.send(f"⚠️ **Error:** `{error}`")
 
 bot.run(TOKEN)
