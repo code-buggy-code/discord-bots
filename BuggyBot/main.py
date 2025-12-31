@@ -1,7 +1,7 @@
 import sys
 sys.path.append('..')
 
-# --- SAFE IMPORTS (Prevents crashes if keys are missing) ---
+# --- SAFE IMPORTS ---
 try:
     from secret_bot import TOKEN, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 except ImportError:
@@ -30,7 +30,7 @@ from spotipy.oauth2 import SpotifyClientCredentials
 # --- CONFIGURATION ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_NAME = "BuggyBotDB"
-IPC_FILE = os.path.join(BASE_DIR, "pending_logs.json") # Mailbox File
+IPC_FILE = os.path.join(BASE_DIR, "pending_logs.json")
 
 DEFAULT_CONFIG = {
     "log_channel_id": 0,
@@ -223,8 +223,6 @@ async def send_log(text):
         await channel.send(f"`[{timestamp}]` 📝 {text}")
 
 # --- TASKS ---
-
-# 1. MAILBOX READER (Reads logs from Manager)
 @tasks.loop(seconds=5)
 async def check_manager_logs():
     if config['log_channel_id'] == 0: return
@@ -277,8 +275,10 @@ async def check_token_expiry(is_startup=False):
                 if time_left.total_seconds() <= 0: status = "❌ **EXPIRED**"
                 elif days < 1: status = f"⚠️ **URGENT:** Expires in {int(time_left.total_seconds()/3600)}h!"
                 else: status = f"✅ Expires in {days} days."
-                prefix = "🚀 **Bot Started:** " if is_startup else "📅 **Daily Check:** "
-                await send_log(f"{prefix}YouTube License Status: {status}")
+                
+                # Only log if it's the daily check, NOT startup (unless urgent)
+                if not is_startup:
+                    await send_log(f"📅 **Daily Check:** YouTube License Status: {status}")
     except: pass
 
 @bot.event
@@ -292,7 +292,6 @@ async def on_ready():
         print(f"Database Connection Error: {e}")
     print(f"Hello! I am logged in as {bot.user}")
     
-    # START THE MAILBOX READER
     if not check_manager_logs.is_running():
         check_manager_logs.start()
         print("📬 Mailbox Reader Started!")
@@ -300,7 +299,7 @@ async def on_ready():
     load_youtube_service()
     load_music_services()
     
-    # NOTE: Startup check removed. Only scheduled check runs now.
+    # We do NOT run check_token_expiry(is_startup=True) anymore to avoid spam
     
     if not scheduler.running:
         scheduler.add_job(nightly_purge, CronTrigger(hour=3, minute=0, timezone='US/Eastern'))
@@ -309,7 +308,6 @@ async def on_ready():
     await send_log("Bot is online and ready!")
 
 # --- EVENTS ---
-
 @bot.event
 async def on_raw_reaction_add(payload):
     if payload.user_id == bot.user.id: return
@@ -368,7 +366,7 @@ async def sync(ctx):
     """(Admin) Pulls changes from GitHub and restarts all bots."""
     await ctx.send("♻️ **Syncing System...**\n1. Pulling code from GitHub...\n2. Restarting all bots (Give me 10 seconds!)")
     os.system("git pull")
-    os.system("pkill -f main.py") # Manager will revive it
+    os.system("pkill -f main.py")
 
 @bot.command()
 @is_admin()
@@ -535,7 +533,6 @@ async def purge(ctx, target: typing.Union[discord.Member, str], scope: typing.Un
             total += len(deleted)
         except: pass
     await ctx.send(f"✅ Deleted {total} messages.")
-    await send_log(f"🗑️ **Purge:** {ctx.author.name} deleted {total} messages.")
 
 @bot.command()
 async def help(ctx):
