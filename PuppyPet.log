@@ -21,3 +21,51 @@ Traceback (most recent call last):
   File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/core.py", line 732, in transform
     raise MissingRequiredArgument(param)
 discord.ext.commands.errors.MissingRequiredArgument: channel_id is a required argument that is missing.
+[2026-01-01 16:44:42] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command ignore
+Traceback (most recent call last):
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/converter.py", line 1335, in _actual_conversion
+    return converter(argument)
+ValueError: invalid literal for int() with base 10: '<#1433914667109060701>'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/bot.py", line 1376, in invoke
+    await ctx.command.invoke(ctx)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/core.py", line 1056, in invoke
+    await self.prepare(ctx)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/core.py", line 973, in prepare
+    await self._parse_arguments(ctx)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/core.py", line 880, in _parse_arguments
+    transformed = await self.transform(ctx, param, attachments)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/core.py", line 750, in transform
+    return await run_converters(ctx, converter, argument, param)  # type: ignore
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/converter.py", line 1442, in run_converters
+    return await _actual_conversion(ctx, converter, argument, param)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/converter.py", line 1344, in _actual_conversion
+    raise BadArgument(f'Converting to "{name}" failed for parameter "{param.name}".') from exc
+discord.ext.commands.errors.BadArgument: Converting to "int" failed for parameter "channel_id".
+[2026-01-01 16:44:50] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command ignore
+Traceback (most recent call last):
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/converter.py", line 1335, in _actual_conversion
+    return converter(argument)
+ValueError: invalid literal for int() with base 10: '<#1433914667109060701>'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/bot.py", line 1376, in invoke
+    await ctx.command.invoke(ctx)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/core.py", line 1056, in invoke
+    await self.prepare(ctx)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/core.py", line 973, in prepare
+    await self._parse_arguments(ctx)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/core.py", line 880, in _parse_arguments
+    transformed = await self.transform(ctx, param, attachments)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/core.py", line 750, in transform
+    return await run_converters(ctx, converter, argument, param)  # type: ignore
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/converter.py", line 1442, in run_converters
+    return await _actual_conversion(ctx, converter, argument, param)
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/commands/converter.py", line 1344, in _actual_conversion
+    raise BadArgument(f'Converting to "{name}" failed for parameter "{param.name}".') from exc
+discord.ext.commands.errors.BadArgument: Converting to "int" failed for parameter "channel_id".
