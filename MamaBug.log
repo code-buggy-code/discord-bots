@@ -10,3 +10,4 @@ Traceback (most recent call last):
   File "/home/ubuntu/GitHub/MamaBug/main.py", line 172, in check_lockout_times
     should_be_locked = is_time_in_range(user_data['start'], user_data['end'], local_time)
 KeyError: 'start'
+[2026-01-01 08:39:29] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session fda6c5dc0f8e81e98b0767ef6074f384.
