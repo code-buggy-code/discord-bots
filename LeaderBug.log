@@ -1119,3 +1119,5 @@ Permanent Leaderboard for Group2 updated in 👑-leaderboard.
 Permanent Leaderboard for Group1 updated in 👑-leaderboard.
 Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
 [2026-01-01 22:35:54] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session 2858c2686576fda8c0f6b2c1f0761773.
+[2026-01-01 23:11:16] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command None
+discord.ext.commands.errors.CommandNotFound: Command "w^" is not found
