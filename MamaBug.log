@@ -3,3 +3,10 @@
 [2026-01-01 03:00:01] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session fda6c5dc0f8e81e98b0767ef6074f384.
 [2026-01-01 05:47:03] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session fda6c5dc0f8e81e98b0767ef6074f384.
 [2026-01-01 07:31:41] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session fda6c5dc0f8e81e98b0767ef6074f384.
+[2026-01-01 07:44:33] [ERROR   ] discord.ext.tasks: Unhandled exception in internal background task 'check_lockout_times'.
+Traceback (most recent call last):
+  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/tasks/__init__.py", line 246, in _loop
+    await self.coro(*args, **kwargs)
+  File "/home/ubuntu/GitHub/MamaBug/main.py", line 172, in check_lockout_times
+    should_be_locked = is_time_in_range(user_data['start'], user_data['end'], local_time)
+KeyError: 'start'
