@@ -320,3 +320,10 @@
 [2026-01-01 17:14:34] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1448891728701427866 responded with 429. Retrying in 0.70 seconds.
 [2026-01-01 17:14:35] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1448889647928446997 responded with 429. Retrying in 0.81 seconds.
 [2026-01-01 17:14:36] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1448889124667789426 responded with 429. Retrying in 0.30 seconds.
+[2026-01-01 17:14:37] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1448811293220929750 responded with 429. Retrying in 0.64 seconds.
+[2026-01-01 17:14:38] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1447970523974864928 responded with 429. Retrying in 0.68 seconds.
+[2026-01-01 17:14:39] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1447966799001030707 responded with 429. Retrying in 0.67 seconds.
+[2026-01-01 17:14:40] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1447843719939358801 responded with 429. Retrying in 0.79 seconds.
+[2026-01-01 17:14:41] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1447826382447972432 responded with 429. Retrying in 0.34 seconds.
+[2026-01-01 17:14:42] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1444512668005433415 responded with 429. Retrying in 0.71 seconds.
+[2026-01-01 17:14:43] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1444320776202354860 responded with 429. Retrying in 0.32 seconds.
