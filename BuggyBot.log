@@ -564,3 +564,9 @@
 [2026-01-01 17:34:42] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1433989273425547405 responded with 429. Retrying in 0.80 seconds.
 [2026-01-01 17:34:43] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1433983526084149338 responded with 429. Retrying in 0.79 seconds.
 [2026-01-01 17:34:44] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433914613895790765/messages/1433983498959458304 responded with 429. Retrying in 0.73 seconds.
+[2026-01-01 17:34:49] [WARNING ] discord.http: We are being rate limited. GET https://discord.com/api/v10/channels/1441945844340359348/messages responded with 429. Retrying in 0.30 seconds.
+[2026-01-01 17:34:50] [WARNING ] discord.http: We are being rate limited. GET https://discord.com/api/v10/channels/1441945844340359348/messages responded with 429. Retrying in 0.46 seconds.
+[2026-01-01 17:34:51] [WARNING ] discord.http: We are being rate limited. GET https://discord.com/api/v10/channels/1441945844340359348/messages responded with 429. Retrying in 0.36 seconds.
+[2026-01-01 17:34:52] [WARNING ] discord.http: We are being rate limited. GET https://discord.com/api/v10/channels/1441945844340359348/messages responded with 429. Retrying in 0.61 seconds.
+[2026-01-01 17:34:53] [WARNING ] discord.http: We are being rate limited. GET https://discord.com/api/v10/channels/1441945844340359348/messages responded with 429. Retrying in 0.59 seconds.
+[2026-01-01 17:34:54] [WARNING ] discord.http: We are being rate limited. GET https://discord.com/api/v10/channels/1441945844340359348/messages responded with 429. Retrying in 0.48 seconds.
