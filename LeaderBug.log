@@ -992,3 +992,5 @@ Permanent Leaderboard for Group2 updated in 👑-leaderboard.
 Permanent Leaderboard for Group1 updated in 👑-leaderboard.
 Warning: Permanent Leaderboard Channel ID 1452001933928825013 not found or bot left guild.
 Background save completed at 2026-01-01 19:40:00.
+[2026-01-01 20:16:03] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command None
+discord.ext.commands.errors.CommandNotFound: Command "me" is not found
