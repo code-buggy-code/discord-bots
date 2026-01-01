@@ -60,3 +60,11 @@
 [2026-01-01 16:53:55] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433930334730326137/messages/1447477522093572186 responded with 429. Retrying in 0.73 seconds.
 [2026-01-01 16:53:56] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433930334730326137/messages/1447476272866525258 responded with 429. Retrying in 0.78 seconds.
 [2026-01-01 16:53:57] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433930334730326137/messages/1447476242558226610 responded with 429. Retrying in 0.83 seconds.
+[2026-01-01 16:53:58] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433930334730326137/messages/1447476218218811392 responded with 429. Retrying in 0.43 seconds.
+[2026-01-01 16:53:59] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433930334730326137/messages/1447473680908161064 responded with 429. Retrying in 0.80 seconds.
+[2026-01-01 16:54:00] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433930334730326137/messages/1447473109946073181 responded with 429. Retrying in 0.73 seconds.
+[2026-01-01 16:54:01] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433930334730326137/messages/1447473032502448258 responded with 429. Retrying in 0.73 seconds.
+[2026-01-01 16:54:02] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433930334730326137/messages/1447472992375541936 responded with 429. Retrying in 0.69 seconds.
+[2026-01-01 16:54:03] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433930334730326137/messages/1447472520738504756 responded with 429. Retrying in 0.69 seconds.
+[2026-01-01 16:54:04] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433930334730326137/messages/1447472471329603685 responded with 429. Retrying in 0.77 seconds.
+[2026-01-01 16:54:05] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1433930334730326137/messages/1447472360440463381 responded with 429. Retrying in 0.64 seconds.
