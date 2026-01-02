@@ -578,3 +578,11 @@
 [2026-01-01 19:52:39] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session bb618ef1861b3b90776fac3f5a004429.
 [2026-01-01 21:52:15] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session bb618ef1861b3b90776fac3f5a004429.
 [2026-01-01 22:18:29] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session bb618ef1861b3b90776fac3f5a004429.
+[2026-01-02 00:05:19] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449903167109332992 responded with 429. Retrying in 0.39 seconds.
+[2026-01-02 00:05:20] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449903012096250009 responded with 429. Retrying in 0.75 seconds.
+[2026-01-02 00:05:21] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449902838506455101 responded with 429. Retrying in 0.77 seconds.
+[2026-01-02 00:05:22] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449098360752439419 responded with 429. Retrying in 0.69 seconds.
+[2026-01-02 00:05:23] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449091538876366889 responded with 429. Retrying in 0.73 seconds.
+[2026-01-02 00:05:24] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449091517166915807 responded with 429. Retrying in 0.69 seconds.
+[2026-01-02 00:05:25] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448972175364063263 responded with 429. Retrying in 0.72 seconds.
+[2026-01-02 00:05:26] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448908708947169342 responded with 429. Retrying in 0.60 seconds.
