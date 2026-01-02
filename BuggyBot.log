@@ -2,3 +2,4 @@
   warnings.warn(message, FutureWarning)
 [2026-01-02 20:13:36] [INFO    ] discord.client: logging in using static token
 [2026-01-02 20:13:36] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: c909b37ed91867caa372a153b843f14c).
+[2026-01-02 20:48:36] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session c909b37ed91867caa372a153b843f14c.
