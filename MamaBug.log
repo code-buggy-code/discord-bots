@@ -28,3 +28,4 @@ discord.ext.commands.errors.CommandNotFound: Command "myview" is not found
 discord.ext.commands.errors.CommandNotFound: Command "myview" is not found
 [2026-01-02 00:19:21] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command None
 discord.ext.commands.errors.CommandNotFound: Command "myview" is not found
+[2026-01-02 00:45:58] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session fda6c5dc0f8e81e98b0767ef6074f384.
