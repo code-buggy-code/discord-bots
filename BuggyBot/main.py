@@ -1,3 +1,48 @@
+"""
+🐛 BUGGYBOT MANIFEST 🐛
+
+--- HELPER FUNCTIONS ---
+- clean_id(mention_str): Converts mentions to raw IDs.
+- load_initial_config(): Loads settings from DB on startup.
+- save_config_to_db(): Saves current settings to DB.
+- is_admin(): Check to see if user has admin role or permissions.
+- load_youtube_service(): Connects to YouTube API (checks DB first, then file).
+- load_music_services(): Connects to Spotify and YouTube Music.
+- process_spotify_link(url): Converts Spotify link -> YouTube Music video ID.
+- send_log(text): Sends a message to the log channel.
+- check_manager_logs(): Loop that checks for logs from other processes (IPC).
+- nightly_purge(): task that deletes messages in specific channels at 3 AM.
+- check_token_validity_task(): Daily task to verify YouTube license.
+
+--- DATABASE HANDLER ---
+- load_config(): Gets bot config from JSON.
+- save_config(config_data): Saves bot config to JSON.
+- load_stickies(): Loads active sticky messages.
+- save_sticky(...): Saves a new sticky message.
+- delete_sticky(channel_id): Removes a sticky message.
+
+--- COMMANDS ---
+- !sync: Updates code from GitHub and restarts.
+- !checkyoutube: Checks if YouTube API token is valid.
+- !setsetting <key> <value>: Sets a config value.
+- !addsetting <key> <value>: Adds items to a list config.
+- !removesetting <key> <value>: Removes items from a list config.
+- !showsettings: Shows all current config values.
+- !refreshyoutube: Starts the OAuth flow to renew YouTube license.
+- !entercode <code>: Completes the YouTube renewal with the code.
+- !stick <text>: Creates a sticky message in the current channel.
+- !unstick: Removes the sticky message in the current channel.
+- !liststickies: Lists all active sticky messages.
+- !purge <target> <scope>: Deletes messages based on filters.
+- !help: Shows the help menu (with YouTube & Spotify mentioned).
+
+--- EVENTS ---
+- on_ready: Startup sequence.
+- on_raw_reaction_add: Handles ticket access via reactions.
+- on_member_update: Handles auto-bans and ticket role assignment.
+- on_message: Handles Sticky Messages and Music Links (YouTube & Spotify).
+"""
+
 import sys
 sys.path.append('..')
 
@@ -523,7 +568,7 @@ async def purge(ctx, target: typing.Union[discord.Member, str], scope: typing.Un
         return True
     for c in chans:
         try:
-            deleted = await c.purge(limit=None, check=check)
+            deleted = await c.purge(limit=None, check=should_delete)
             total += len(deleted)
         except: pass
     await ctx.send(f"✅ Deleted {total} messages.")
@@ -537,7 +582,7 @@ async def help(ctx):
     embed.add_field(name="♻️ System", value="`!sync` (Update & Restart)", inline=False)
     embed.add_field(name="📺 YouTube", value="`!refreshyoutube`, `!entercode`, `!checkyoutube`", inline=False)
     embed.add_field(name="🧹 Purge", value="`!purge <user/all> <channel/category/server>`", inline=False)
-    embed.add_field(name="🎵 Music", value="Paste Spotify link in music channel!", inline=False)
+    embed.add_field(name="🎵 Music", value="Paste YouTube or Spotify links in the music channel!", inline=False)
     await ctx.send(embed=embed)
 
 @bot.event
@@ -562,7 +607,7 @@ async def on_message(message):
                 await db.save_sticky(message.channel.id, content, new_msg.id, sticky_data[message.channel.id][2])
             except: pass
     if config['music_channel_id'] != 0 and message.channel.id == config['music_channel_id']:
-        if "open.spotify.com" in message.content:
+        if "spotify.com" in message.content:
              res = await asyncio.to_thread(process_spotify_link, message.content)
              if res: await message.channel.send(res)
         elif youtube:
