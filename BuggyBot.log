@@ -586,3 +586,6 @@
 [2026-01-02 00:05:24] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1449091517166915807 responded with 429. Retrying in 0.69 seconds.
 [2026-01-02 00:05:25] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448972175364063263 responded with 429. Retrying in 0.72 seconds.
 [2026-01-02 00:05:26] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448908708947169342 responded with 429. Retrying in 0.60 seconds.
+[2026-01-02 00:05:27] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448906606506147881 responded with 429. Retrying in 0.69 seconds.
+[2026-01-02 00:05:28] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448484709301616660 responded with 429. Retrying in 0.62 seconds.
+[2026-01-02 00:05:29] [WARNING ] discord.http: We are being rate limited. DELETE https://discord.com/api/v10/channels/1448475477197983847/messages/1448484664363843664 responded with 429. Retrying in 0.81 seconds.
