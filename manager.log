@@ -47,3 +47,5 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
  7 files changed, 23 deletions(-)
  rewrite BuggyBot.log (100%)
  rewrite MamaBug.log (100%)
+To https://github.com/code-buggy-code/discord-bots
+   44e8d2e..acc72b0  main -> main
