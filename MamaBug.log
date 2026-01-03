@@ -7,3 +7,5 @@ Traceback (most recent call last):
   File "/home/ubuntu/GitHub/MamaBug/main.py", line 172, in check_lockout_times
     should_be_locked = is_time_in_range(user_data['start'], user_data['end'], local_time)
 KeyError: 'start'
+[2026-01-03 23:50:08] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command None
+discord.ext.commands.errors.CommandNotFound: Command "myview" is not found
