@@ -9,3 +9,5 @@ Traceback (most recent call last):
 KeyError: 'start'
 [2026-01-03 23:50:08] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command None
 discord.ext.commands.errors.CommandNotFound: Command "myview" is not found
+[2026-01-03 23:59:50] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command None
+discord.ext.commands.errors.CommandNotFound: Command "myview" is not found
