@@ -124,7 +124,7 @@ ROLE_ID_KEYS = ["bad_role_to_ban_id", "ticket_access_role_id"]
 config = DEFAULT_CONFIG.copy()
 db = None
 sticky_data = {} 
-vote_data = {} # Format: {target_id: [voter_id, voter_id, ...]}
+vote_data = {} 
 is_purging = False
 youtube = None
 auth_flow = None 
@@ -202,7 +202,7 @@ class DatabaseHandler:
         new_doc = {"_id": target_id, "voters": voters}
         collection = self.data.get("votes", [])
         collection = [d for d in collection if d.get("_id") != target_id]
-        if voters: # Only save if there are still votes
+        if voters: 
             collection.append(new_doc)
         self.data["votes"] = collection
         self._save_to_file()
@@ -280,21 +280,43 @@ def load_music_services():
     except: pass
 
 def process_spotify_link(url):
-    if not spotify or not ytmusic: return None
+    # Added clearer error messages so you know why it fails!
+    if not spotify: return "❌ Spotify service is not loaded. Check credentials."
+    if not ytmusic: return "❌ YouTube Music service is not loaded. Check `browser.json`."
     if not config['playlist_id']: return "⚠️ No playlist ID set in config!"
+    
     try:
         if "track" in url:
-            track = spotify.track(url)
+            # Try to fetch track details from Spotify
+            try:
+                track = spotify.track(url)
+            except Exception as e:
+                return f"❌ Spotify couldn't read that link: {e}"
+                
             artist = track['artists'][0]['name']
             title = track['name']
             search_query = f"{artist} - {title}"
-            search_results = ytmusic.search(search_query, filter="songs")
+            
+            # Try to search on YouTube Music
+            try:
+                search_results = ytmusic.search(search_query, filter="songs")
+            except Exception as e:
+                return f"❌ Search failed on YouTube Music: {e}"
+
             if not search_results: return f"⚠️ Couldn't find **{title}** on YouTube Music."
             song_id = search_results[0]['videoId']
-            ytmusic.add_playlist_items(config['playlist_id'], [song_id])
+            
+            # Try to add to playlist
+            try:
+                ytmusic.add_playlist_items(config['playlist_id'], [song_id])
+            except Exception as e:
+                return f"❌ Failed to add to playlist: {e}"
+                
             return f"🎶 Added **{title}** by **{artist}** to the playlist!"
-    except: return None
-    return None
+        else:
+            return "⚠️ That doesn't look like a valid Spotify track link."
+    except Exception as e: 
+        return f"❌ Unexpected Error: {e}"
 
 # --- BOT SETUP ---
 intents = discord.Intents.all()
@@ -687,10 +709,15 @@ async def on_message(message):
                 await db.save_sticky(message.channel.id, content, new_msg.id, sticky_data[message.channel.id][2])
             except: pass
     if config['music_channel_id'] != 0 and message.channel.id == config['music_channel_id']:
-        # FIXED: Removed specific "1" check. Now detects any spotify.com link.
-        if "spotify.com" in message.content:
+        # FIXED: Removed specific "2" check and added broader "spotify.com" check.
+        # Checks if it has spotify.com AND http to avoid random text triggers.
+        if "spotify.com" in message.content and "http" in message.content:
              res = await asyncio.to_thread(process_spotify_link, message.content)
-             if res: await message.channel.send(res)
+             if res: 
+                 await message.channel.send(res)
+             else:
+                 # It shouldn't be silent anymore, but just in case:
+                 pass
         elif youtube:
             v_id = None
             if "v=" in message.content: v_id = message.content.split("v=")[1].split("&")[0]
