@@ -281,7 +281,7 @@ def load_music_services():
     except: pass
 
 async def process_spotify_link(url, channel):
-    """Refactored to be chatty and tell you exactly where it is stuck!"""
+    """Refactored to check services and use a thread executor for blocking calls (older Python support)."""
     
     # Check services first
     if not spotify: 
@@ -294,18 +294,21 @@ async def process_spotify_link(url, channel):
         await channel.send("⚠️ **Error:** No YouTube Playlist ID is set in my settings!")
         return
 
-    # Clean up the URL just in case there is text around it
+    # Clean up the URL
     match = re.search(r'(https?://[^\s]+)', url)
     if match: 
         clean_url = match.group(0)
     else:
         clean_url = url
 
+    # Prepare the loop for running blocking code
+    loop = asyncio.get_running_loop()
+
     # STEP 1: Ask Spotify
     await channel.send(f"1️⃣ **Checking Spotify API...** (Link: `{clean_url}`)")
     try:
-        # Run blocking spotify call in a thread so bot doesn't freeze
-        track = await asyncio.to_thread(spotify.track, clean_url)
+        # Use run_in_executor instead of to_thread for older Python versions
+        track = await loop.run_in_executor(None, spotify.track, clean_url)
         artist = track['artists'][0]['name']
         title = track['name']
         await channel.send(f"✅ **Spotify Success:** Identified song as **{title}** by **{artist}**.")
@@ -317,7 +320,8 @@ async def process_spotify_link(url, channel):
     await channel.send(f"2️⃣ **Searching YouTube Music...** for `{artist} - {title}`")
     search_query = f"{artist} - {title}"
     try:
-        search_results = await asyncio.to_thread(ytmusic.search, search_query, "songs")
+        # Note: ytmusic.search returns a list
+        search_results = await loop.run_in_executor(None, lambda: ytmusic.search(search_query, "songs"))
         if not search_results:
             await channel.send("❌ **YouTube Search Failed:** No results found on YouTube Music.")
             return
@@ -332,7 +336,7 @@ async def process_spotify_link(url, channel):
     # STEP 3: Add to Playlist
     await channel.send("3️⃣ **Adding to Playlist...**")
     try:
-        await asyncio.to_thread(ytmusic.add_playlist_items, config['playlist_id'], [song_id])
+        await loop.run_in_executor(None, lambda: ytmusic.add_playlist_items(config['playlist_id'], [song_id]))
         await channel.send(f"🎉 **DONE!** Successfully added **{title}** to the playlist!")
     except Exception as e:
         await channel.send(f"❌ **Playlist Failed:** I found the song but couldn't add it.\nReason: `{e}`")
@@ -734,12 +738,18 @@ async def on_message(message):
     # Check for music links
     if config['music_channel_id'] != 0 and message.channel.id == config['music_channel_id']:
         
-        # 1. Check for ANY Spotify link
-        if "spotify.com" in message.content.lower() and "http" in message.content.lower():
+        # 1. Check for ANY Google/Spotify link (ignores the number at the end!)
+        # matches: http://googleusercontent.com/spotify.com/ANYTHING
+        if "http://googleusercontent.com/spotify.com/" in message.content.lower() and "http" in message.content.lower():
              await message.channel.send("👀 **I see a Spotify link!** Starting process...")
              await process_spotify_link(message.content, message.channel)
         
-        # 2. Check for YouTube links (fallback)
+        # 2. Check for ANY standard Spotify link
+        elif "open.spotify.com/track" in message.content.lower():
+             await message.channel.send("👀 **I see a standard Spotify link!** Starting process...")
+             await process_spotify_link(message.content, message.channel)
+
+        # 3. Check for YouTube links (fallback)
         elif youtube:
             v_id = None
             if "v=" in message.content: v_id = message.content.split("v=")[1].split("&")[0]
