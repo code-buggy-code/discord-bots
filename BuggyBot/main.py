@@ -8,7 +8,7 @@
 - is_admin(): Check to see if user has admin role or permissions.
 - load_youtube_service(): Connects to YouTube API (checks DB first, then file).
 - load_music_services(): Connects to Spotify and YouTube Music.
-- process_spotify_link(url, channel): (ASYNC) steps through the add process and sends logs to chat.
+- process_spotify_link(url): (ASYNC) Processes Spotify link and adds to YT Playlist silently.
 - send_log(text): Sends a message to the log channel.
 - check_manager_logs(): Loop that checks for logs from other processes (IPC).
 - nightly_purge(): task that deletes messages in specific channels at 3 AM.
@@ -91,7 +91,7 @@ DEFAULT_CONFIG = {
     "bad_role_to_ban_id": 0,
     "ticket_access_role_id": 0,
     "admin_role_id": [],
-    "sticky_delay_seconds": 300,
+    "sticky_delay_seconds": 300, # Default 5 minutes
     "ticket_category_id": 0, 
     "ticket_message": "{mention} Welcome! React to this message to get chat access!", 
     "ticket_channel_name_format": "desperate-{username}",
@@ -135,7 +135,8 @@ spotify = None
 # --- DATABASE HANDLER ---
 class DatabaseHandler:
     def __init__(self, uri, db_name):
-        self.file_path = "database.json"
+        # Using absolute path to ensure data persists correctly across restarts
+        self.file_path = os.path.join(BASE_DIR, "database.json")
         self.data = self._load_from_file()
 
     def _load_from_file(self):
@@ -175,7 +176,8 @@ class DatabaseHandler:
                     time_val = datetime.datetime.fromisoformat(time_val)
                 except:
                     time_val = datetime.datetime.now()
-            data[doc['_id']] = [doc['content'], doc['last_msg_id'], time_val]
+            # Ensure keys are integers (channel IDs)
+            data[int(doc['_id'])] = [doc['content'], doc['last_msg_id'], time_val]
         return data
 
     async def save_sticky(self, channel_id, content, last_msg_id, last_time):
@@ -196,7 +198,7 @@ class DatabaseHandler:
         data = {}
         collection = self.data.get("votes", [])
         for doc in collection:
-            data[doc['_id']] = doc.get('voters', [])
+            data[int(doc['_id'])] = doc.get('voters', [])
         return data
 
     async def save_vote(self, target_id, voters):
@@ -280,64 +282,34 @@ def load_music_services():
             ytmusic = YTMusic(browser_path)
     except: pass
 
-async def process_spotify_link(url, channel):
-    """Refactored to find via YTMusic but ADD via the working YouTube API!"""
+async def process_spotify_link(url):
+    """Processes Spotify Link silently: Returns True if successful, False if not."""
     
-    # Check services first
-    if not spotify: 
-        await channel.send("❌ **Error:** Spotify service is not loaded.")
-        return
-    # Note: We need ytmusic to FIND the song, but we use 'youtube' to ADD it.
-    if not ytmusic:
-        await channel.send("❌ **Error:** YouTube Music service (search) is not loaded.")
-        return
-    if not youtube:
-        await channel.send("❌ **Error:** Main YouTube service (playlist adder) is not loaded. Check `!checkyoutube`.")
-        return
-    if not config['playlist_id']:
-        await channel.send("⚠️ **Error:** No YouTube Playlist ID is set in my settings!")
-        return
+    # Check services first (Silent fail or log to console if needed)
+    if not spotify or not ytmusic or not youtube or not config['playlist_id']:
+        return False
 
     # Clean up the URL
     match = re.search(r'(https?://[^\s]+)', url)
-    if match: 
-        clean_url = match.group(0)
-    else:
-        clean_url = url
+    if match: clean_url = match.group(0)
+    else: clean_url = url
 
     loop = asyncio.get_running_loop()
 
-    # STEP 1: Ask Spotify
-    await channel.send(f"1️⃣ **Checking Spotify API...** (Link: `{clean_url}`)")
     try:
+        # 1. Identify Song
         track = await loop.run_in_executor(None, spotify.track, clean_url)
         artist = track['artists'][0]['name']
         title = track['name']
-        await channel.send(f"✅ **Spotify Success:** Identified song as **{title}** by **{artist}**.")
-    except Exception as e:
-        await channel.send(f"❌ **Spotify Failed:** I couldn't understand that link.\nReason: `{e}`")
-        return
+        search_query = f"{artist} - {title}"
 
-    # STEP 2: Search YouTube
-    await channel.send(f"2️⃣ **Searching YouTube Music...** for `{artist} - {title}`")
-    search_query = f"{artist} - {title}"
-    try:
+        # 2. Search YouTube
         search_results = await loop.run_in_executor(None, lambda: ytmusic.search(search_query, "songs"))
-        if not search_results:
-            await channel.send("❌ **YouTube Search Failed:** No results found on YouTube Music.")
-            return
+        if not search_results: return False
         
         song_id = search_results[0]['videoId']
-        song_title = search_results[0]['title']
-        await channel.send(f"✅ **YouTube Success:** Found video **{song_title}** (ID: `{song_id}`).")
-    except Exception as e:
-        await channel.send(f"❌ **YouTube Search Crud:** Something broke while searching.\nReason: `{e}`")
-        return
 
-    # STEP 3: Add to Playlist (USING THE WORKING YOUTUBE SERVICE)
-    await channel.send("3️⃣ **Adding to Playlist...** (Using the working path!)")
-    try:
-        # We construct the request object...
+        # 3. Add to Playlist (Using YouTube API)
         req = youtube.playlistItems().insert(
             part="snippet", 
             body={
@@ -350,12 +322,12 @@ async def process_spotify_link(url, channel):
                 }
             }
         )
-        # ...and execute it in the thread executor so it doesn't freeze the bot
         await loop.run_in_executor(None, req.execute)
-        
-        await channel.send(f"🎉 **DONE!** Successfully added **{title}** to the playlist!")
+        return True # Success!
+
     except Exception as e:
-        await channel.send(f"❌ **Playlist Failed:** I found the song but couldn't add it.\nReason: `{e}`")
+        print(f"Spotify Processing Error: {e}") 
+        return False
 
 # --- BOT SETUP ---
 intents = discord.Intents.all()
@@ -424,6 +396,7 @@ async def on_ready():
         await load_initial_config()
         sticky_data = await db.load_stickies()
         vote_data = await db.load_votes()
+        print(f"Stickies Loaded: {len(sticky_data)}")
     except Exception as e:
         print(f"Database Connection Error: {e}")
     print(f"Hello! I am logged in as {bot.user}")
@@ -670,8 +643,6 @@ async def vote(ctx, target_id: str):
         vote_data[user_id] = []
     
     if ctx.author.id in vote_data[user_id]:
-        # Don't delete, just warn? Or maybe just let them vote again if admins want to pile on? 
-        # Standard logic usually allows unique votes.
         pass
 
     vote_data[user_id].append(ctx.author.id)
@@ -737,35 +708,46 @@ async def on_message(message):
         except: pass
         return
 
+    # --- FIXED STICKY MESSAGES ---
     if message.channel.id in sticky_data:
         content, last_id, last_time = sticky_data[message.channel.id]
         if isinstance(last_time, datetime.datetime): last_time = last_time.timestamp()
+        
+        # Check against the configured delay
         if datetime.datetime.utcnow().timestamp() - last_time > config['sticky_delay_seconds']:
             try:
+                # Delete the old sticky if it exists
                 if last_id:
-                    try: m = await message.channel.fetch_message(last_id); await m.delete()
+                    try: 
+                        m = await message.channel.fetch_message(last_id)
+                        await m.delete()
                     except: pass
+                
+                # Send new sticky
                 new_msg = await message.channel.send(content)
+                
+                # Update DB
                 sticky_data[message.channel.id][1] = new_msg.id
                 sticky_data[message.channel.id][2] = datetime.datetime.utcnow().timestamp()
                 await db.save_sticky(message.channel.id, content, new_msg.id, sticky_data[message.channel.id][2])
             except: pass
             
-    # Check for music links
+    # --- MUSIC LINKS ---
     if config['music_channel_id'] != 0 and message.channel.id == config['music_channel_id']:
         
-        # 1. Check for ANY Google/Spotify link (ignores the number at the end!)
-        # matches: http://googleusercontent.com/spotify.com/ANYTHING
-        if "http://googleusercontent.com/spotify.com/" in message.content.lower() and "http" in message.content.lower():
-             await message.channel.send("👀 **I see a Spotify link!** Starting process...")
-             await process_spotify_link(message.content, message.channel)
+        # 1. Spotify Links (Any format)
+        if "http://googleusercontent.com/spotify.com/" in message.content.lower():
+             success = await process_spotify_link(message.content)
+             if success:
+                 await message.add_reaction("🎵")
         
-        # 2. Check for ANY standard Spotify link
+        # 2. Standard Spotify Links
         elif "open.spotify.com/track" in message.content.lower():
-             await message.channel.send("👀 **I see a standard Spotify link!** Starting process...")
-             await process_spotify_link(message.content, message.channel)
+             success = await process_spotify_link(message.content)
+             if success:
+                 await message.add_reaction("🎵")
 
-        # 3. Check for YouTube links (fallback)
+        # 3. YouTube Links (Direct)
         elif youtube:
             v_id = None
             if "v=" in message.content: v_id = message.content.split("v=")[1].split("&")[0]
