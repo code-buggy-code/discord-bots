@@ -5312,3 +5312,6 @@ hint: See the 'Note about fast-forwards' in 'git push --help' for details.
  rewrite MamaBug.log (100%)
  rewrite PrincessPet.log (100%)
  rewrite PuppyPet.log (100%)
+To https://github.com/code-buggy-code/discord-bots
+ ! [remote rejected] main -> main (cannot lock ref 'refs/heads/main': is at fe8738aa630c389dcdddf8621741c379da3dec4c but expected ccdf6ae641ee5c7cd9474633e460e8d460c56054)
+error: failed to push some refs to 'https://github.com/code-buggy-code/discord-bots'
