@@ -281,7 +281,7 @@ def load_music_services():
     except: pass
 
 async def process_spotify_link(url, channel):
-    """Refactored to check services and use a thread executor for blocking calls (older Python support)."""
+    """Refactored to be chatty and handle 401 errors gracefully."""
     
     # Check services first
     if not spotify: 
@@ -301,13 +301,12 @@ async def process_spotify_link(url, channel):
     else:
         clean_url = url
 
-    # Prepare the loop for running blocking code
+    # Prepare the loop for running blocking code (compatible with older Python)
     loop = asyncio.get_running_loop()
 
     # STEP 1: Ask Spotify
     await channel.send(f"1️⃣ **Checking Spotify API...** (Link: `{clean_url}`)")
     try:
-        # Use run_in_executor instead of to_thread for older Python versions
         track = await loop.run_in_executor(None, spotify.track, clean_url)
         artist = track['artists'][0]['name']
         title = track['name']
@@ -320,7 +319,6 @@ async def process_spotify_link(url, channel):
     await channel.send(f"2️⃣ **Searching YouTube Music...** for `{artist} - {title}`")
     search_query = f"{artist} - {title}"
     try:
-        # Note: ytmusic.search returns a list
         search_results = await loop.run_in_executor(None, lambda: ytmusic.search(search_query, "songs"))
         if not search_results:
             await channel.send("❌ **YouTube Search Failed:** No results found on YouTube Music.")
@@ -339,7 +337,11 @@ async def process_spotify_link(url, channel):
         await loop.run_in_executor(None, lambda: ytmusic.add_playlist_items(config['playlist_id'], [song_id]))
         await channel.send(f"🎉 **DONE!** Successfully added **{title}** to the playlist!")
     except Exception as e:
-        await channel.send(f"❌ **Playlist Failed:** I found the song but couldn't add it.\nReason: `{e}`")
+        error_msg = str(e)
+        if "401" in error_msg or "Unauthorized" in error_msg:
+             await channel.send("❌ **Uh oh! Permission Denied.**\nYour `browser.json` file has expired or is invalid. I can't talk to YouTube Music anymore!\n👉 Please generate a new `browser.json` file using `ytmusicapi oauth` or headers.")
+        else:
+             await channel.send(f"❌ **Playlist Failed:** I found the song but couldn't add it.\nReason: `{e}`")
 
 # --- BOT SETUP ---
 intents = discord.Intents.all()
