@@ -12,3 +12,5 @@ KeyError: 'start'
 [2026-01-03 01:20:35] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session ce96ff34b8fcadefc3f69ca72c9c6094.
 [2026-01-03 03:24:57] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session ce96ff34b8fcadefc3f69ca72c9c6094.
 [2026-01-03 03:46:24] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session ce96ff34b8fcadefc3f69ca72c9c6094.
+[2026-01-03 05:54:08] [ERROR   ] discord.ext.commands.bot: Ignoring exception in command None
+discord.ext.commands.errors.CommandNotFound: Command "myview" is not found
