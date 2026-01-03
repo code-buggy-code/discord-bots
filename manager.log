@@ -1,1 +1,14 @@
 nohup: ignoring input
+[main 180618a] Auto-sync by Manager
+ 9 files changed, 2 insertions(+), 5901 deletions(-)
+ rewrite BuggyBot.log (100%)
+ rewrite MamaBug.log (100%)
+ rewrite manager.log (99%)
+To https://github.com/code-buggy-code/discord-bots
+ ! [rejected]        main -> main (fetch first)
+error: failed to push some refs to 'https://github.com/code-buggy-code/discord-bots'
+hint: Updates were rejected because the remote contains work that you do
+hint: not have locally. This is usually caused by another repository pushing
+hint: to the same ref. You may want to first integrate the remote changes
+hint: (e.g., 'git pull ...') before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
