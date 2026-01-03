@@ -72,6 +72,7 @@ import os
 import json
 import re
 import typing
+import requests # Added to help resolve tricky links if needed!
 from ytmusicapi import YTMusic
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyClientCredentials
@@ -285,36 +286,45 @@ def process_spotify_link(url):
     if not ytmusic: return "❌ YouTube Music service is not loaded. Check `browser.json`."
     if not config['playlist_id']: return "⚠️ No playlist ID set in config!"
     
+    # Attempt to resolve redirects if it's a short link (like your example!)
     try:
-        if "track" in url:
-            # Try to fetch track details from Spotify
-            try:
-                track = spotify.track(url)
-            except Exception as e:
-                return f"❌ Spotify couldn't read that link: {e}"
-                
-            artist = track['artists'][0]['name']
-            title = track['name']
-            search_query = f"{artist} - {title}"
-            
-            # Try to search on YouTube Music
-            try:
-                search_results = ytmusic.search(search_query, filter="songs")
-            except Exception as e:
-                return f"❌ Search failed on YouTube Music: {e}"
+        if "http" in url and "spotify" in url:
+             # Basic check to see if we can resolve a redirect
+             try:
+                 head = requests.head(url, allow_redirects=True, timeout=5)
+                 if head.url != url:
+                     url = head.url
+             except: pass 
+    except: pass
 
-            if not search_results: return f"⚠️ Couldn't find **{title}** on YouTube Music."
-            song_id = search_results[0]['videoId']
+    try:
+        # We removed the strict 'track' check so it tries to process ANY link you give it!
+        try:
+            track = spotify.track(url)
+        except Exception as e:
+            return f"❌ Spotify couldn't read that link: {e}"
             
-            # Try to add to playlist
-            try:
-                ytmusic.add_playlist_items(config['playlist_id'], [song_id])
-            except Exception as e:
-                return f"❌ Failed to add to playlist: {e}"
-                
-            return f"🎶 Added **{title}** by **{artist}** to the playlist!"
-        else:
-            return "⚠️ That doesn't look like a valid Spotify track link."
+        artist = track['artists'][0]['name']
+        title = track['name']
+        search_query = f"{artist} - {title}"
+        
+        # Try to search on YouTube Music
+        try:
+            search_results = ytmusic.search(search_query, filter="songs")
+        except Exception as e:
+            return f"❌ Search failed on YouTube Music: {e}"
+
+        if not search_results: return f"⚠️ Couldn't find **{title}** on YouTube Music."
+        song_id = search_results[0]['videoId']
+        
+        # Try to add to playlist
+        try:
+            ytmusic.add_playlist_items(config['playlist_id'], [song_id])
+        except Exception as e:
+            return f"❌ Failed to add to playlist: {e}"
+            
+        return f"🎶 Added **{title}** by **{artist}** to the playlist!"
+
     except Exception as e: 
         return f"❌ Unexpected Error: {e}"
 
@@ -709,14 +719,12 @@ async def on_message(message):
                 await db.save_sticky(message.channel.id, content, new_msg.id, sticky_data[message.channel.id][2])
             except: pass
     if config['music_channel_id'] != 0 and message.channel.id == config['music_channel_id']:
-        # FIXED: Removed specific "2" check and added broader "spotify.com" check.
-        # Checks if it has spotify.com AND http to avoid random text triggers.
-        if "spotify.com" in message.content and "http" in message.content:
+        # FIXED: Now simply looks for "spotify.com" to cover all bases!
+        if "spotify.com" in message.content:
              res = await asyncio.to_thread(process_spotify_link, message.content)
              if res: 
                  await message.channel.send(res)
              else:
-                 # It shouldn't be silent anymore, but just in case:
                  pass
         elif youtube:
             v_id = None
