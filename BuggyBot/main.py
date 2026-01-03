@@ -20,6 +20,8 @@
 - load_stickies(): Loads active sticky messages.
 - save_sticky(...): Saves a new sticky message.
 - delete_sticky(channel_id): Removes a sticky message.
+- load_votes(): Loads the current vote counts.
+- save_vote(target_id, voters): Saves a user's vote list.
 
 --- COMMANDS ---
 - !sync: Updates code from GitHub and restarts.
@@ -34,6 +36,9 @@
 - !unstick: Removes the sticky message in the current channel.
 - !liststickies: Lists all active sticky messages.
 - !purge <target> <scope>: Deletes messages based on filters.
+- !vote <user_id>: (Admin) Registers a vote against a user. 3 votes = kick.
+- !removevotes <user_id>: (Admin) Removes the most recent vote for a user.
+- !showvotes: (Admin) Lists all active votes.
 - !help: Shows the help menu (with YouTube & Spotify mentioned).
 
 --- EVENTS ---
@@ -119,6 +124,7 @@ ROLE_ID_KEYS = ["bad_role_to_ban_id", "ticket_access_role_id"]
 config = DEFAULT_CONFIG.copy()
 db = None
 sticky_data = {} 
+vote_data = {} # Format: {target_id: [voter_id, voter_id, ...]}
 is_purging = False
 youtube = None
 auth_flow = None 
@@ -136,7 +142,7 @@ class DatabaseHandler:
             with open(self.file_path, "r") as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {"bot_config": [], "sticky_messages": []}
+            return {"bot_config": [], "sticky_messages": [], "votes": []}
 
     def _save_to_file(self):
         with open(self.file_path, "w") as f:
@@ -183,6 +189,22 @@ class DatabaseHandler:
         collection = self.data.get("sticky_messages", [])
         collection = [d for d in collection if d.get("_id") != channel_id]
         self.data["sticky_messages"] = collection
+        self._save_to_file()
+
+    async def load_votes(self):
+        data = {}
+        collection = self.data.get("votes", [])
+        for doc in collection:
+            data[doc['_id']] = doc.get('voters', [])
+        return data
+
+    async def save_vote(self, target_id, voters):
+        new_doc = {"_id": target_id, "voters": voters}
+        collection = self.data.get("votes", [])
+        collection = [d for d in collection if d.get("_id") != target_id]
+        if voters: # Only save if there are still votes
+            collection.append(new_doc)
+        self.data["votes"] = collection
         self._save_to_file()
 
 def clean_id(mention_str):
@@ -335,11 +357,12 @@ async def check_token_validity_task():
 
 @bot.event
 async def on_ready():
-    global db, sticky_data
+    global db, sticky_data, vote_data
     try:
         db = DatabaseHandler(None, DB_NAME)
         await load_initial_config()
         sticky_data = await db.load_stickies()
+        vote_data = await db.load_votes()
     except Exception as e:
         print(f"Database Connection Error: {e}")
     print(f"Hello! I am logged in as {bot.user}")
@@ -575,12 +598,69 @@ async def purge(ctx, target: typing.Union[discord.Member, str], scope: typing.Un
     await send_log(f"🗑️ **Purge:** {ctx.author.name} deleted {total} messages.")
 
 @bot.command()
+@is_admin()
+async def vote(ctx, target_id: str):
+    """Adds a vote to a user. 3 votes = kick."""
+    try: await ctx.message.delete()
+    except: pass
+    
+    user_id = clean_id(target_id)
+    if user_id not in vote_data:
+        vote_data[user_id] = []
+    
+    vote_data[user_id].append(ctx.author.id)
+    await db.save_vote(user_id, vote_data[user_id])
+    
+    await send_log(f"🗳️ **VOTE:** <@{ctx.author.id}> voted for <@{user_id}>. (Total: {len(vote_data[user_id])})")
+    
+    if len(vote_data[user_id]) >= 3:
+        guild = ctx.guild
+        member = guild.get_member(user_id)
+        if member:
+            try:
+                await member.kick(reason="Received 3 votes from admins.")
+                await send_log(f"🦶 **KICKED:** <@{user_id}> was kicked after receiving 3 votes.")
+                # We do NOT clear votes, so they can't rejoin easily without notice, 
+                # or you can use !removevotes to clear them if needed.
+            except Exception as e:
+                await send_log(f"❌ Failed to kick <@{user_id}>: {e}")
+        else:
+            await send_log(f"⚠️ User <@{user_id}> reached 3 votes but is not in the server.")
+
+@bot.command()
+@is_admin()
+async def removevotes(ctx, target_id: str):
+    """Removes the most recent vote from a user."""
+    user_id = clean_id(target_id)
+    if user_id in vote_data and vote_data[user_id]:
+        removed = vote_data[user_id].pop()
+        await db.save_vote(user_id, vote_data[user_id])
+        await ctx.send(f"✅ Removed one vote from <@{user_id}> (Originally by <@{removed}>).")
+    else:
+        await ctx.send(f"❌ No votes found for <@{user_id}>.")
+
+@bot.command()
+@is_admin()
+async def showvotes(ctx):
+    """Lists current active votes."""
+    if not vote_data:
+        return await ctx.send("📝 No active votes.")
+    
+    text = "**Current Votes:**\n"
+    for uid, voters in vote_data.items():
+        if len(voters) > 0:
+            voter_list = ", ".join([f"<@{v}>" for v in voters])
+            text += f"• <@{uid}>: {len(voters)} votes ({voter_list})\n"
+    await ctx.send(text)
+
+@bot.command()
 async def help(ctx):
     embed = discord.Embed(title="BuggyBot Help", color=discord.Color.blue())
     embed.add_field(name="⚙️ Settings", value="`!setsetting`, `!addsetting`, `!removesetting`, `!showsettings`", inline=False)
     embed.add_field(name="📌 Sticky", value="`!stick`, `!unstick`, `!liststickies`", inline=False)
     embed.add_field(name="♻️ System", value="`!sync` (Update & Restart)", inline=False)
     embed.add_field(name="📺 YouTube", value="`!refreshyoutube`, `!entercode`, `!checkyoutube`", inline=False)
+    embed.add_field(name="🗳️ Votes (Admin)", value="`!vote`, `!removevotes`, `!showvotes`", inline=False)
     embed.add_field(name="🧹 Purge", value="`!purge <user/all> <channel/category/server>`", inline=False)
     embed.add_field(name="🎵 Music", value="Paste YouTube or Spotify links in the music channel!", inline=False)
     await ctx.send(embed=embed)
@@ -607,6 +687,7 @@ async def on_message(message):
                 await db.save_sticky(message.channel.id, content, new_msg.id, sticky_data[message.channel.id][2])
             except: pass
     if config['music_channel_id'] != 0 and message.channel.id == config['music_channel_id']:
+        # FIXED: Removed specific "1" check. Now detects any spotify.com link.
         if "spotify.com" in message.content:
              res = await asyncio.to_thread(process_spotify_link, message.content)
              if res: await message.channel.send(res)
