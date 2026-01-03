@@ -10,17 +10,30 @@ from datetime import datetime, timezone
 # import motor.motor_asyncio 
 import asyncio 
 
-# --- 1. CONFIGURATION SETTINGS (REPLACE THIS!) ---
-# IMPORTANT: REPLACE THIS WITH YOUR CONNECTION STRING FROM MONGODB ATLAS
+# --- FUNCTION LIST ---
+# To ensure nothing is lost, here is the list of all functions in this bot:
+# 1. DatabaseHandler Class:
+#    - __init__, _load_from_file, _save_to_file
+#    - load_config, save_config, load_stickies, save_sticky, delete_sticky
+#    - update_user_points, get_all_group_points, clear_points_by_group
+# 2. Configuration:
+#    - load_initial_config, save_config_to_db
+# 3. Utility:
+#    - add_points_to_cache, is_category_tracked, _create_leaderboard_embed
+# 4. Events:
+#    - on_ready, on_message, on_message_delete, on_reaction_add, on_voice_state_update
+# 5. Tasks:
+#    - voice_time_checker, point_saver
+# 6. Commands:
+#    - set_log_channel, set_vc_role, set_permanent_leaderboard, clear_permanent_leaderboard
+#    - clear_group_points, show_leaderboard, rename_group, track_category
+#    - untrack_category, award_points, remove_points, show_points, show_settings_cmd, set_points
 
-# Your bot's secret key
-# The symbol users type before a command
+# --- 1. CONFIGURATION SETTINGS ---
 PREFIX = "^" 
 
 # Database configuration
 DB_NAME = "LeaderboardDB"
-POINTS_COLLECTION = "user_points"
-CONFIG_COLLECTION = "bot_config"
 
 # --- 2. BOT SETUP ---
 intents = discord.Intents.default()
@@ -39,10 +52,11 @@ DEFAULT_POINT_VALUES = {
     'reaction_receive': 2
 }
 
-# UPDATED: Only 2 groups with the fun names you wanted!
+# UPDATED: Now with 3 Groups!
 DEFAULT_GROUPS = {
     "Group1": {"name": "Meowzers", "categories": []},
-    "Group2": {"name": "Arfers", "categories": []}
+    "Group2": {"name": "Arfers", "categories": []},
+    "Group3": {"name": "Chirpers", "categories": []} # New Group 3!
 }
 
 # Global in-memory variables
@@ -53,17 +67,16 @@ POINT_CACHE = {}
 LEADERBOARD_CACHE = {}   
 PERMANENT_LEADERBOARDS = {} 
 
-# NEW: Globals for Voice Notification
+# Globals for Voice Notification & Logging
 VC_NOTIFY_ROLE_ID = None
-VC_ACTIVE_STATE = {} # Tracks how long a VC has been active
+VC_ACTIVE_STATE = {} 
+LOG_CHANNEL_ID = None 
 
 # Global DB handler instance
 db = None
 
 
-# --- 4. MONGODB UTILITY CLASS ---
-
-# --- 2. DATABASE HANDLER (LOCAL FILE VERSION) ---
+# --- 4. DATABASE HANDLER (LOCAL FILE VERSION) ---
 class DatabaseHandler:
     def __init__(self, uri, db_name):
         self.file_path = "database.json"
@@ -123,7 +136,6 @@ class DatabaseHandler:
         self.data["sticky_messages"] = collection
         self._save_to_file()
 
-    # --- NEW METHODS FOR LEADERBUG ---
     async def update_user_points(self, guild_id, group_key, user_id, points):
         user_id = str(user_id)
         guild_id = str(guild_id)
@@ -173,9 +185,10 @@ class DatabaseHandler:
         self._save_to_file()
         return initial_count - len(new_collection)
 
+# --- 5. CONFIGURATION LOADING ---
 async def load_initial_config():
     """Loads initial configuration from MongoDB."""
-    global POINT_VALUES, LEADERBOARD_GROUPS, LEADERBOARD_CACHE, PERMANENT_LEADERBOARDS, VC_NOTIFY_ROLE_ID
+    global POINT_VALUES, LEADERBOARD_GROUPS, LEADERBOARD_CACHE, PERMANENT_LEADERBOARDS, VC_NOTIFY_ROLE_ID, LOG_CHANNEL_ID
     
     config = await db.load_config()
 
@@ -186,12 +199,11 @@ async def load_initial_config():
     
     # Load GROUPS
     groups_config = config.get('LEADERBOARD_GROUPS', DEFAULT_GROUPS)
-    # This filters out any old groups (like Group3) that might be stuck in the database
+    
+    # This ensures that Group1, Group2, AND Group3 are all loaded correctly
     temp_groups = {key: data for key, data in groups_config.items() if key in DEFAULT_GROUPS} 
     
-    # If the database is empty or missing keys, use defaults
     LEADERBOARD_GROUPS.update(DEFAULT_GROUPS.copy())
-    # If the database has valid custom data for Group1/Group2, overlay it
     LEADERBOARD_GROUPS.update(temp_groups)
     
     # Load CACHE and Permanent Leaderboard
@@ -200,6 +212,9 @@ async def load_initial_config():
 
     # Load VC Notify Role
     VC_NOTIFY_ROLE_ID = config.get('VC_NOTIFY_ROLE_ID', None)
+
+    # Load Log Channel ID
+    LOG_CHANNEL_ID = config.get('LOG_CHANNEL_ID', None)
     
     print("Configuration loaded from MongoDB.")
 
@@ -210,7 +225,8 @@ async def save_config_to_db():
         'LEADERBOARD_GROUPS': LEADERBOARD_GROUPS,
         'LEADERBOARD_CACHE': LEADERBOARD_CACHE,
         'PERMANENT_LEADERBOARDS': PERMANENT_LEADERBOARDS,
-        'VC_NOTIFY_ROLE_ID': VC_NOTIFY_ROLE_ID
+        'VC_NOTIFY_ROLE_ID': VC_NOTIFY_ROLE_ID,
+        'LOG_CHANNEL_ID': LOG_CHANNEL_ID
     }
     await db.save_config(config)
 
@@ -256,12 +272,10 @@ async def _create_leaderboard_embed(guild, group_key):
     
     footer_timestamp = f"N/A" if updated_time_unix == 'N/A' else f"<t:{updated_time_unix}:f>"
     
-    # NEW: Set initial description with the time stamp as the header
     leaderboard_text = f"**As of** {footer_timestamp}\n\n"
     
     if not top_users:
         embed.description = leaderboard_text + "🥺 No points recorded yet."
-        # NEW: Final footer format
         embed.set_footer(text=f"Refreshes every 5 minutes")
         return embed
         
@@ -275,8 +289,6 @@ async def _create_leaderboard_embed(guild, group_key):
             leaderboard_text += f"**#{rank}** **[User Left]**: {int(points)} Points\n"
 
     embed.description = leaderboard_text
-    
-    # NEW: Final footer format
     embed.set_footer(text=f"Refreshes every 5 minutes")
     return embed
 
@@ -289,13 +301,10 @@ async def on_ready():
     global db
     
     try:
-        # 1. Initialize DB Connection and Test Ping
         print(f"Attempting to connect to MongoDB...")
         db = DatabaseHandler("", DB_NAME)
-        # await db.client.admin.command('ping')
         print("Successfully connected to MongoDB!")
 
-        # 2. Load Config from DB
         await load_initial_config()
 
     except Exception as e:
@@ -303,11 +312,10 @@ async def on_ready():
         print(f"Connection Error: {e}")
         return
 
-    # 3. Start Tasks
     print(f'Hello! I am logged in as {bot.user} with prefix "{PREFIX}"')
     voice_time_checker.start() 
     
-    # Logic to align point_saver to clean 5-minute intervals (00, 05, 10, etc.)
+    # Logic to align point_saver to clean 5-minute intervals
     now = datetime.now()
     current_total_seconds = now.minute * 60 + now.second
     seconds_past_last_5_min_mark = current_total_seconds % 300
@@ -327,7 +335,6 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     """Runs whenever a user sends a message or attachment."""
-    # IGNORES BOT USERS
     if message.author.bot:
         return
         
@@ -335,7 +342,6 @@ async def on_message(message):
     if group_key:
         add_points_to_cache(message.author.id, message.guild.id, group_key, POINT_VALUES['message'])
         
-        # Counts both uploaded files and links that create embeds
         total_items = len(message.attachments) + len(message.embeds)
         if total_items > 0:
             points = total_items * POINT_VALUES['attachment']
@@ -344,9 +350,33 @@ async def on_message(message):
     await bot.process_commands(message)
 
 @bot.event
+async def on_message_delete(message):
+    """Runs when a message is deleted and logs it if a log channel is set."""
+    if message.author.bot:
+        return
+        
+    if LOG_CHANNEL_ID:
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            embed = discord.Embed(
+                title="🗑️ Message Deleted",
+                description=message.content if message.content else "*[No Text Content]*",
+                color=discord.Color.red(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.set_author(name=f"{message.author} (ID: {message.author.id})", icon_url=message.author.display_avatar.url)
+            embed.add_field(name="Channel", value=message.channel.mention, inline=True)
+            
+            if message.attachments:
+                att_list = "\n".join([f"[{a.filename}]({a.url})" for a in message.attachments])
+                embed.add_field(name="Attachments", value=att_list, inline=False)
+                
+            await log_channel.send(embed=embed)
+
+
+@bot.event
 async def on_reaction_add(reaction, user):
     """Runs whenever a user adds a reaction to a message."""
-    # IGNORES BOT USERS
     if user.bot or not reaction.message.guild:
         return
 
@@ -355,7 +385,6 @@ async def on_reaction_add(reaction, user):
         add_points_to_cache(user.id, reaction.message.guild.id, group_key, POINT_VALUES['reaction_add'])
         
         message_author = reaction.message.author
-        # IGNORES BOT AUTHORS AND SELF-REACTIONS
         if message_author.bot or user.id == message_author.id:
             return
             
@@ -366,7 +395,6 @@ async def on_voice_state_update(member, before, after):
     """Runs whenever a user joins, leaves, or moves in a voice channel."""
     user_id = str(member.id)
     
-    # IGNORE BOT USERS ENTERING/LEAVING VOICE CHANNELS
     if member.bot:
         return
     
@@ -382,10 +410,7 @@ async def on_voice_state_update(member, before, after):
 
 @tasks.loop(seconds=30.0) 
 async def voice_time_checker():
-    """
-    1. Awards points for voice time by adding them to the POINT_CACHE.
-    2. Checks if a VC has had 2+ users for 5 mins and pings the notify role.
-    """
+    """Awards points for voice time and checks for VC notification."""
     current_time = time.time()
     
     # --- PART 1: POINT AWARDING ---
@@ -395,69 +420,54 @@ async def voice_time_checker():
             
         time_diff = current_time - join_time 
         
-        # Check if they were there for at least one 30-second interval
         if time_diff >= 30.0:
-            
-            # Get the guild and member object
             guild = bot.get_guild(data.get('guild_id'))
             member = guild.get_member(int(user_id_str)) if guild else None
 
             if member and member.voice and member.voice.channel:
                 vc = member.voice.channel
-                # Count non-bot members in the voice channel
                 non_bot_users = sum(1 for m in vc.members if not m.bot)
                 
-                # Only award points if there are 2 or more non-bot users
                 if non_bot_users >= 2:
                     points_earned = POINT_VALUES['voice_interval'] 
                     add_points_to_cache(int(user_id_str), guild.id, group_key, points_earned)
                 
-                # Reset join time to current time regardless of whether points were awarded
                 VOICE_TRACKER[user_id_str]['time'] = current_time 
             
     # --- PART 2: VC NOTIFICATION LOGIC ---
     if VC_NOTIFY_ROLE_ID:
         for guild in bot.guilds:
-            # Check if the role exists in this guild
             role = guild.get_role(VC_NOTIFY_ROLE_ID)
             if not role:
                 continue
 
             for vc in guild.voice_channels:
-                # Count non-bot members
                 non_bot_members = [m for m in vc.members if not m.bot]
                 
                 if len(non_bot_members) >= 2:
-                    # If this VC is not being tracked yet, start tracking
                     if vc.id not in VC_ACTIVE_STATE:
                         VC_ACTIVE_STATE[vc.id] = {'start_time': current_time, 'pinged': False}
-                    
                     else:
-                        # Check how long it has been active
                         data = VC_ACTIVE_STATE[vc.id]
                         elapsed = current_time - data['start_time']
                         
-                        # If more than 5 minutes (300 seconds) and haven't pinged yet
                         if elapsed >= 300 and not data['pinged']:
                             try:
-                                # Send just the role mention
                                 await vc.send(role.mention)
-                                # Mark as pinged so it doesn't spam
                                 data['pinged'] = True
                             except Exception as e:
                                 print(f"Error pinging role in VC {vc.name}: {e}")
                 else:
-                    # Less than 2 users, reset the tracking for this VC
                     if vc.id in VC_ACTIVE_STATE:
                         del VC_ACTIVE_STATE[vc.id]
 
 
 @tasks.loop(seconds=300.0) 
 async def point_saver():
-    """Merges in-memory points to MongoDB, saves, pre-calculates leaderboards, and updates permanent message."""
+    """Merges in-memory points to MongoDB, saves, and updates permanent message."""
     global POINT_CACHE, LEADERBOARD_CACHE
     
-    # 1. Merge cache to MongoDB (only if there are new points)
+    # 1. Merge cache to MongoDB
     if POINT_CACHE:
         for guild_id, groups in POINT_CACHE.items():
             for group_key, users in groups.items():
@@ -467,9 +477,9 @@ async def point_saver():
                     except Exception as e:
                         print(f"ERROR saving points to DB for {user_id}: {e}")
         
-        POINT_CACHE = {} # Clear the cache
+        POINT_CACHE = {} 
 
-    # 2. Pre-calculate and cache leaderboards from MongoDB
+    # 2. Pre-calculate and cache leaderboards
     new_leaderboard_cache = {}
     current_unix_timestamp = int(datetime.now(timezone.utc).timestamp())
     
@@ -497,9 +507,7 @@ async def point_saver():
             channel = bot.get_channel(data['channel_id'])
             if channel and channel.guild:
                 message = await channel.fetch_message(data['message_id'])
-                
                 new_embed = await _create_leaderboard_embed(channel.guild, group_key)
-                
                 await message.edit(embed=new_embed)
                 print(f"Permanent Leaderboard for {group_key} updated in {channel.name}.")
             else:
@@ -517,6 +525,17 @@ async def point_saver():
 
 
 # --- 9. COMMANDS ---
+
+@bot.command(name='setlogchannel')
+@commands.has_permissions(administrator=True)
+async def set_log_channel(ctx, channel: discord.TextChannel):
+    """^setlogchannel <#channel>: Sets the channel where deleted messages will be logged."""
+    global LOG_CHANNEL_ID
+    
+    LOG_CHANNEL_ID = channel.id
+    await save_config_to_db()
+    
+    await ctx.send(f"✅ Deleted messages will now be logged in {channel.mention}!")
 
 @bot.command(name='setvcrole')
 @commands.has_permissions(administrator=True)
@@ -808,6 +827,10 @@ async def show_settings_cmd(ctx):
     # VC Role
     vc_role = f"<@&{VC_NOTIFY_ROLE_ID}>" if VC_NOTIFY_ROLE_ID else "None"
     embed.add_field(name="🔊 VC Notify Role", value=vc_role, inline=False)
+
+    # Log Channel
+    log_channel = f"<#{LOG_CHANNEL_ID}>" if LOG_CHANNEL_ID else "None"
+    embed.add_field(name="🗑️ Log Channel", value=log_channel, inline=False)
     
     await ctx.send(embed=embed)
 
