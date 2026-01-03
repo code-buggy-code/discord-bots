@@ -22,3 +22,4 @@ Traceback (most recent call last):
   File "/home/ubuntu/GitHub/BuggyBot/main.py", line 611, in on_message
     res = await asyncio.to_thread(process_spotify_link, message.content)
 AttributeError: module 'asyncio' has no attribute 'to_thread'
+[2026-01-03 19:50:12] [INFO    ] discord.gateway: Shard ID None has successfully RESUMED session c909b37ed91867caa372a153b843f14c.
