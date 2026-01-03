@@ -281,14 +281,18 @@ def load_music_services():
     except: pass
 
 async def process_spotify_link(url, channel):
-    """Refactored to be chatty and handle 401 errors gracefully."""
+    """Refactored to find via YTMusic but ADD via the working YouTube API!"""
     
     # Check services first
     if not spotify: 
-        await channel.send("❌ **Error:** Spotify service is not loaded. I can't check the link.")
+        await channel.send("❌ **Error:** Spotify service is not loaded.")
         return
+    # Note: We need ytmusic to FIND the song, but we use 'youtube' to ADD it.
     if not ytmusic:
-        await channel.send("❌ **Error:** YouTube Music service is not loaded (browser.json). I can't search.")
+        await channel.send("❌ **Error:** YouTube Music service (search) is not loaded.")
+        return
+    if not youtube:
+        await channel.send("❌ **Error:** Main YouTube service (playlist adder) is not loaded. Check `!checkyoutube`.")
         return
     if not config['playlist_id']:
         await channel.send("⚠️ **Error:** No YouTube Playlist ID is set in my settings!")
@@ -301,7 +305,6 @@ async def process_spotify_link(url, channel):
     else:
         clean_url = url
 
-    # Prepare the loop for running blocking code (compatible with older Python)
     loop = asyncio.get_running_loop()
 
     # STEP 1: Ask Spotify
@@ -331,17 +334,28 @@ async def process_spotify_link(url, channel):
         await channel.send(f"❌ **YouTube Search Crud:** Something broke while searching.\nReason: `{e}`")
         return
 
-    # STEP 3: Add to Playlist
-    await channel.send("3️⃣ **Adding to Playlist...**")
+    # STEP 3: Add to Playlist (USING THE WORKING YOUTUBE SERVICE)
+    await channel.send("3️⃣ **Adding to Playlist...** (Using the working path!)")
     try:
-        await loop.run_in_executor(None, lambda: ytmusic.add_playlist_items(config['playlist_id'], [song_id]))
+        # We construct the request object...
+        req = youtube.playlistItems().insert(
+            part="snippet", 
+            body={
+                "snippet": {
+                    "playlistId": config['playlist_id'], 
+                    "resourceId": {
+                        "kind": "youtube#video", 
+                        "videoId": song_id
+                    }
+                }
+            }
+        )
+        # ...and execute it in the thread executor so it doesn't freeze the bot
+        await loop.run_in_executor(None, req.execute)
+        
         await channel.send(f"🎉 **DONE!** Successfully added **{title}** to the playlist!")
     except Exception as e:
-        error_msg = str(e)
-        if "401" in error_msg or "Unauthorized" in error_msg:
-             await channel.send("❌ **Uh oh! Permission Denied.**\nYour `browser.json` file has expired or is invalid. I can't talk to YouTube Music anymore!\n👉 Please generate a new `browser.json` file using `ytmusicapi oauth` or headers.")
-        else:
-             await channel.send(f"❌ **Playlist Failed:** I found the song but couldn't add it.\nReason: `{e}`")
+        await channel.send(f"❌ **Playlist Failed:** I found the song but couldn't add it.\nReason: `{e}`")
 
 # --- BOT SETUP ---
 intents = discord.Intents.all()
