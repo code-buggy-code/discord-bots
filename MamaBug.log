@@ -1,9 +1,0 @@
-[2026-01-03 20:19:31] [INFO    ] discord.client: logging in using static token
-[2026-01-03 20:19:32] [INFO    ] discord.gateway: Shard ID None has connected to Gateway (Session ID: 7aa8d251e8c01f95c16a6177c107563d).
-[2026-01-03 20:19:34] [ERROR   ] discord.ext.tasks: Unhandled exception in internal background task 'check_lockout_times'.
-Traceback (most recent call last):
-  File "/home/ubuntu/.local/lib/python3.8/site-packages/discord/ext/tasks/__init__.py", line 246, in _loop
-    await self.coro(*args, **kwargs)
-  File "/home/ubuntu/GitHub/MamaBug/main.py", line 172, in check_lockout_times
-    should_be_locked = is_time_in_range(user_data['start'], user_data['end'], local_time)
-KeyError: 'start'
