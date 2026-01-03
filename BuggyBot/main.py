@@ -72,7 +72,7 @@ import os
 import json
 import re
 import typing
-import requests # Added to help resolve tricky links if needed!
+import requests
 from ytmusicapi import YTMusic
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyClientCredentials
@@ -97,7 +97,7 @@ DEFAULT_CONFIG = {
     "ticket_channel_name_format": "desperate-{username}",
     "ticket_react_message_id": 0,
     "ticket_react_emoji": "✅",
-    "youtube_token_json": "" # NEW: License lives here now!
+    "youtube_token_json": "" 
 }
 
 SIMPLE_SETTINGS = {
@@ -286,45 +286,42 @@ def process_spotify_link(url):
     if not ytmusic: return "❌ YouTube Music service is not loaded. Check `browser.json`."
     if not config['playlist_id']: return "⚠️ No playlist ID set in config!"
     
-    # Attempt to resolve redirects if it's a short link (like your example!)
-    try:
-        if "http" in url and "spotify" in url:
-             # Basic check to see if we can resolve a redirect
-             try:
-                 head = requests.head(url, allow_redirects=True, timeout=5)
-                 if head.url != url:
-                     url = head.url
-             except: pass 
-    except: pass
+    # Check for the Google User Content link (Image/Proxy)
+    if "googleusercontent.com" in url:
+        return (
+            "⚠️ **Oops!** That looks like an image link (probably the album art), not the song.\n"
+            "👉 Please go to Spotify, right-click the song, select **Share**, and click **Copy Song Link**."
+        )
 
     try:
-        # We removed the strict 'track' check so it tries to process ANY link you give it!
-        try:
-            track = spotify.track(url)
-        except Exception as e:
-            return f"❌ Spotify couldn't read that link: {e}"
+        if "track" in url:
+            try:
+                track = spotify.track(url)
+            except Exception as e:
+                return f"❌ Spotify couldn't read that link: {e}"
+                
+            artist = track['artists'][0]['name']
+            title = track['name']
+            search_query = f"{artist} - {title}"
             
-        artist = track['artists'][0]['name']
-        title = track['name']
-        search_query = f"{artist} - {title}"
-        
-        # Try to search on YouTube Music
-        try:
-            search_results = ytmusic.search(search_query, filter="songs")
-        except Exception as e:
-            return f"❌ Search failed on YouTube Music: {e}"
+            # Try to search on YouTube Music
+            try:
+                search_results = ytmusic.search(search_query, filter="songs")
+            except Exception as e:
+                return f"❌ Search failed on YouTube Music: {e}"
 
-        if not search_results: return f"⚠️ Couldn't find **{title}** on YouTube Music."
-        song_id = search_results[0]['videoId']
-        
-        # Try to add to playlist
-        try:
-            ytmusic.add_playlist_items(config['playlist_id'], [song_id])
-        except Exception as e:
-            return f"❌ Failed to add to playlist: {e}"
+            if not search_results: return f"⚠️ Couldn't find **{title}** on YouTube Music."
+            song_id = search_results[0]['videoId']
             
-        return f"🎶 Added **{title}** by **{artist}** to the playlist!"
-
+            # Try to add to playlist
+            try:
+                ytmusic.add_playlist_items(config['playlist_id'], [song_id])
+            except Exception as e:
+                return f"❌ Failed to add to playlist: {e}"
+                
+            return f"🎶 Added **{title}** by **{artist}** to the playlist!"
+        else:
+            return f"⚠️ I found a Spotify link, but it's missing 'track'! Please check that it's a song link.\n(Seen: {url})"
     except Exception as e: 
         return f"❌ Unexpected Error: {e}"
 
@@ -640,6 +637,11 @@ async def vote(ctx, target_id: str):
     if user_id not in vote_data:
         vote_data[user_id] = []
     
+    if ctx.author.id in vote_data[user_id]:
+        # Don't delete, just warn? Or maybe just let them vote again if admins want to pile on? 
+        # Standard logic usually allows unique votes.
+        pass
+
     vote_data[user_id].append(ctx.author.id)
     await db.save_vote(user_id, vote_data[user_id])
     
@@ -652,8 +654,6 @@ async def vote(ctx, target_id: str):
             try:
                 await member.kick(reason="Received 3 votes from admins.")
                 await send_log(f"🦶 **KICKED:** <@{user_id}> was kicked after receiving 3 votes.")
-                # We do NOT clear votes, so they can't rejoin easily without notice, 
-                # or you can use !removevotes to clear them if needed.
             except Exception as e:
                 await send_log(f"❌ Failed to kick <@{user_id}>: {e}")
         else:
@@ -719,8 +719,9 @@ async def on_message(message):
                 await db.save_sticky(message.channel.id, content, new_msg.id, sticky_data[message.channel.id][2])
             except: pass
     if config['music_channel_id'] != 0 and message.channel.id == config['music_channel_id']:
-        # FIXED: Now simply looks for "spotify.com" to cover all bases!
-        if "spotify.com" in message.content:
+        # FIXED: Very broad check now. Matches ANY message containing "spotify.com".
+        if "spotify.com" in message.content.lower():
+             await send_log(f"🔎 Detected Spotify link in music channel: {message.content}") # Debug log
              res = await asyncio.to_thread(process_spotify_link, message.content)
              if res: 
                  await message.channel.send(res)
