@@ -168,6 +168,10 @@ async def check_lockout_times():
         for member in tz_role.members:
             user_data = await db.get_user_lockout(member.id)
             if not user_data: continue
+            
+            # --- FIX: Ensure data is complete to avoid KeyError: 'start' ---
+            if 'start' not in user_data or 'end' not in user_data:
+                continue
 
             should_be_locked = is_time_in_range(user_data['start'], user_data['end'], local_time)
             has_role = target_role in member.roles
@@ -245,6 +249,20 @@ async def myset(ctx, start: str, end: str, repeat: str):
     await ctx.send(f"✅ Lockout set for **{start}** to **{end}**!")
 
 @bot.command()
+async def myview(ctx):
+    user_data = await db.get_user_lockout(ctx.author.id)
+    # Check if data exists AND has the required fields
+    if not user_data or 'start' not in user_data:
+        await ctx.send("❌ You don't have a custom lockout set, buggy!")
+        return
+
+    start = user_data.get('start', 'N/A')
+    end = user_data.get('end', 'N/A')
+    repeat = user_data.get('repeat', 'None')
+    
+    await ctx.send(f"📅 **Your Lockout Settings:**\n⏰ **Start:** {start}\n⏰ **End:** {end}\n🔁 **Repeat:** {repeat}")
+
+@bot.command()
 async def myclear(ctx):
     user_data = await db.get_user_lockout(ctx.author.id)
     if not user_data:
@@ -252,7 +270,7 @@ async def myclear(ctx):
         return
 
     now = datetime.now()
-    if is_time_in_range(user_data['start'], user_data['end'], now):
+    if 'start' in user_data and is_time_in_range(user_data['start'], user_data['end'], now):
          await ctx.send("❌ You cannot clear your lockout while it is active!")
          return
 
