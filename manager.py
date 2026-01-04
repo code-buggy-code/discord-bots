@@ -4,7 +4,15 @@ import subprocess
 import sys
 import datetime
 import json
-import signal
+
+# --- FUNCTIONS IN THIS FILE ---
+# 1. log(message) - Prints timestamped logs.
+# 2. queue_discord_msg(content) - Sends messages to the Discord bot queue.
+# 3. get_git_hash() - Gets the current commit hash of the repo.
+# 4. stop_all_bots() - Forcefully stops all bot processes.
+# 5. start_all_bots() - Finds and starts all main.py files.
+# 6. check_and_update_github() - Pulls from GitHub and returns True if code changed.
+# ------------------------------
 
 # --- CONFIGURATION ---
 DAILY_REPORT_HOUR = 4 # 4 AM
@@ -15,9 +23,6 @@ sys.path.append(ROOT_DIR)
 
 # Path to the shared "Mailbox" file
 IPC_FILE = os.path.join(ROOT_DIR, "BuggyBot", "pending_logs.json")
-
-# Memory to remember when files were last changed
-bot_timestamps = {}
 
 def log(message):
     print(f"[{time.strftime('%H:%M:%S')}] {message}")
@@ -35,28 +40,19 @@ def queue_discord_msg(content):
     with open(IPC_FILE, "w") as f:
         json.dump(queue, f)
 
-def get_file_mtime(filepath):
-    """Gets the 'modification time' of a file to see if it changed."""
-    try:
-        return os.path.getmtime(filepath)
-    except:
-        return 0
+def get_git_hash():
+    """Returns the current Git Commit Hash."""
+    os.chdir(ROOT_DIR)
+    return subprocess.getoutput("git rev-parse HEAD")
 
-def kill_bot(script_path):
-    """Finds and stops a specific bot."""
-    # Find the Process ID (PID)
-    pid_cmd = f"ps -ef | grep '{script_path}' | grep -v grep | awk '{{print $2}}'"
-    pids = subprocess.getoutput(pid_cmd).split()
-    
-    for pid in pids:
-        if pid:
-            try:
-                os.kill(int(pid), signal.SIGKILL)
-                log(f"🔫 Killed old process: {pid}")
-            except:
-                pass
+def stop_all_bots():
+    """Kills all running bots."""
+    log("🛑 Stopping all bots...")
+    os.system("pkill -f main.py")
+    time.sleep(2) # Give them a moment to die
 
-def manage_bots():
+def start_all_bots():
+    """Scans for main.py files and starts them if they aren't running."""
     active_bots = []
     
     for item in os.listdir(ROOT_DIR):
@@ -65,67 +61,72 @@ def manage_bots():
         # We only care about folders with "main.py"
         if os.path.isdir(folder_path) and "main.py" in os.listdir(folder_path):
             script_path = os.path.join(folder_path, "main.py")
-            current_mtime = get_file_mtime(script_path)
             
-            # CHECK 1: Is the bot running?
+            # Check if it is running
             is_running = subprocess.getoutput(f"ps -ef | grep '{script_path}' | grep -v grep")
-            
-            # CHECK 2: Did the code change?
-            last_mtime = bot_timestamps.get(item, 0)
-            code_changed = (last_mtime != 0) and (current_mtime > last_mtime)
-            
-            if code_changed:
-                log(f"🔄 Update detected for {item}! Restarting...")
-                kill_bot(script_path)
-                is_running = False # Force restart
             
             if not is_running:
                 log(f"⚡ Starting {item}...")
                 os.chdir(folder_path)
                 os.system(f"nohup python3 {script_path} > ../{item}.log 2>&1 &")
                 os.chdir(ROOT_DIR)
-                
-            # Update our memory
-            bot_timestamps[item] = current_mtime
-            active_bots.append(item)
             
+            active_bots.append(item)
+    
     return active_bots
 
-def check_for_push():
-    os.chdir(ROOT_DIR)
-    status = subprocess.getoutput("git status --porcelain")
+def check_and_update_github():
+    """Checks for updates on GitHub. Returns True if updates were applied."""
+    current_hash = get_git_hash()
     
-    if status:
-        log("💾 Local changes detected. Backing up to GitHub (Quietly)...")
-        os.system("git add .")
-        os.system('git commit -m "Auto-sync by Manager"')
-        os.system("git push")
+    # Fetch the latest info from GitHub without merging yet
+    os.chdir(ROOT_DIR)
+    subprocess.getoutput("git fetch")
+    
+    # Check what the hash WOULD be if we pulled (remote/main)
+    # Note: Assuming 'origin/main' is the branch. If you use 'master', change 'main' to 'master'.
+    remote_hash = subprocess.getoutput("git rev-parse origin/main")
+    
+    if current_hash != remote_hash:
+        log("🔄 New code found on GitHub! Updating...")
+        # Force the update
+        os.system("git pull")
+        return True
+        
+    return False
 
 # --- MAIN LOOP ---
 if __name__ == "__main__":
-    # Clean slate on startup!
-    log("🧹 Cleaning up old bots...")
-    os.system("pkill -f main.py")
-    time.sleep(2)
+    log("✅ Smart Manager Started in GitHub-Sync Mode.")
     
-    bots = manage_bots()
-    log(f"✅ Smart Manager Started. Active: {', '.join(bots)}")
-    queue_discord_msg(f"👀 **Smart Manager Online:** I am watching for code changes!")
+    # Initial cleanup and start
+    stop_all_bots()
+    bots = start_all_bots()
+    queue_discord_msg(f"👀 **Manager Online:** Synced with GitHub and running!")
     
     last_report_date = None
 
     while True:
         try:
-            bots = manage_bots() # Checks for updates every loop!
-            check_for_push()
+            # 1. Check for GitHub Updates
+            if check_and_update_github():
+                log("🚀 Update applied! Restarting everything...")
+                stop_all_bots() # Kill the old versions
+                bots = start_all_bots() # Start the new versions
+                queue_discord_msg("♻️ **System Updated:** All bots have been restarted with the latest code from GitHub.")
 
+            # 2. Keep bots alive (Crash recovery)
+            # Even if no update, we run start_all_bots to ensure nothing crashed.
+            bots = start_all_bots()
+
+            # 3. Daily Report
             now = datetime.datetime.now()
             if now.hour == DAILY_REPORT_HOUR and last_report_date != now.date():
-                status_msg = f"Good morning! \nTime: {now.strftime('%c')}\nActive Bots: {len(bots)}\nSystem is healthy."
+                status_msg = f"Good morning! \nTime: {now.strftime('%c')}\nActive Bots: {len(bots)}\nGitHub Sync is active."
                 queue_discord_msg(status_msg)
                 last_report_date = now.date()
                 
         except Exception as e:
             log(f"⚠️ Manager Error: {e}")
         
-        time.sleep(10) # Check faster (every 10 seconds)
+        time.sleep(10) # Check GitHub every 10 seconds
