@@ -19,15 +19,16 @@ import asyncio
 #    - load_initial_config, save_config_to_db
 # 3. Utility:
 #    - add_points_to_cache, is_category_tracked, _create_leaderboard_embed
-#    - refresh_group_leaderboard (NEW), check_admin_perms (NEW)
+#    - refresh_group_leaderboard, check_admin_perms, is_user_admin (NEW)
 # 4. Events:
 #    - on_ready, on_message, on_message_delete, on_reaction_add, on_voice_state_update
 # 5. Tasks:
 #    - voice_time_checker, point_saver
 # 6. Commands:
-#    - set_log_channel, set_vc_role, set_admin_role (NEW), set_permanent_leaderboard, clear_permanent_leaderboard
-#    - clear_group_points, show_leaderboard, rename_group, track_category
-#    - untrack_category, award_points, remove_points, show_points, show_settings_cmd, set_points
+#    - set_log_channel, set_vc_role, manage_admin_roles (UPDATED), set_permanent_leaderboard
+#    - clear_permanent_leaderboard, clear_group_points, show_leaderboard
+#    - rename_group, track_category, untrack_category, award_points, remove_points
+#    - show_points, show_settings_cmd, set_points
 
 # --- 1. CONFIGURATION SETTINGS ---
 PREFIX = "^" 
@@ -68,7 +69,7 @@ PERMANENT_LEADERBOARDS = {}
 
 # Globals for Roles & Logging
 VC_NOTIFY_ROLE_ID = None
-ADMIN_ROLE_ID = None # New: Role ID for point admins
+ADMIN_ROLE_IDS = [] # Changed to a list to support multiple roles
 VC_ACTIVE_STATE = {} 
 LOG_CHANNEL_ID = None 
 
@@ -188,7 +189,7 @@ class DatabaseHandler:
 # --- 5. CONFIGURATION LOADING ---
 async def load_initial_config():
     """Loads initial configuration from MongoDB."""
-    global POINT_VALUES, LEADERBOARD_GROUPS, LEADERBOARD_CACHE, PERMANENT_LEADERBOARDS, VC_NOTIFY_ROLE_ID, LOG_CHANNEL_ID, ADMIN_ROLE_ID
+    global POINT_VALUES, LEADERBOARD_GROUPS, LEADERBOARD_CACHE, PERMANENT_LEADERBOARDS, VC_NOTIFY_ROLE_ID, LOG_CHANNEL_ID, ADMIN_ROLE_IDS
     
     config = await db.load_config()
 
@@ -210,7 +211,17 @@ async def load_initial_config():
     # Load Roles and Channels
     VC_NOTIFY_ROLE_ID = config.get('VC_NOTIFY_ROLE_ID', None)
     LOG_CHANNEL_ID = config.get('LOG_CHANNEL_ID', None)
-    ADMIN_ROLE_ID = config.get('ADMIN_ROLE_ID', None)
+    
+    # Load Admin Role IDs (Handle legacy single ID or new list)
+    admin_data = config.get('ADMIN_ROLE_IDS', None)
+    if admin_data is None:
+        # Check for old key just in case
+        old_id = config.get('ADMIN_ROLE_ID', None)
+        ADMIN_ROLE_IDS = [old_id] if old_id else []
+    elif isinstance(admin_data, list):
+        ADMIN_ROLE_IDS = admin_data
+    else:
+        ADMIN_ROLE_IDS = []
     
     print("Configuration loaded from MongoDB.")
 
@@ -223,7 +234,7 @@ async def save_config_to_db():
         'PERMANENT_LEADERBOARDS': PERMANENT_LEADERBOARDS,
         'VC_NOTIFY_ROLE_ID': VC_NOTIFY_ROLE_ID,
         'LOG_CHANNEL_ID': LOG_CHANNEL_ID,
-        'ADMIN_ROLE_ID': ADMIN_ROLE_ID
+        'ADMIN_ROLE_IDS': ADMIN_ROLE_IDS 
     }
     await db.save_config(config)
 
@@ -325,16 +336,22 @@ async def refresh_group_leaderboard(guild, group_key):
             print(f"Error immediate update for {group_key}: {e}")
 
 # --- Custom Check for Admins or Permitted Roles ---
+
+def is_user_admin(member):
+    """Checks if a member is an admin (Has Administrator permission OR is in ADMIN_ROLE_IDS)."""
+    if member.guild_permissions.administrator:
+        return True
+    
+    for role_id in ADMIN_ROLE_IDS:
+        role = member.guild.get_role(role_id)
+        if role and role in member.roles:
+            return True
+    return False
+
 def check_admin_perms():
     def predicate(ctx):
-        # 1. Check if user is an actual Administrator
-        if ctx.author.guild_permissions.administrator:
+        if is_user_admin(ctx.author):
             return True
-        # 2. Check if user has the assigned Admin Role
-        if ADMIN_ROLE_ID:
-            role = ctx.guild.get_role(ADMIN_ROLE_ID)
-            if role and role in ctx.author.roles:
-                return True
         return False
     return commands.check(predicate)
 
@@ -401,33 +418,29 @@ async def on_message_delete(message):
         return
         
     if LOG_CHANNEL_ID:
-        # --- NEW LOGIC: Check who deleted the message ---
-        ignore_deletion = False
+        deleter = None
+        
         try:
-            # Wait a brief moment for audit log to populate
+            # Wait a brief moment for audit log to populate (it can be slow)
             await asyncio.sleep(0.5) 
             async for entry in message.guild.audit_logs(limit=1, action=discord.AuditLogAction.message_delete):
-                # Check if the audit log entry targets this message (rough check via target user and time)
+                # Check if the audit log entry targets this message's author
                 if entry.target.id == message.author.id:
-                    deleter = entry.user
-                    
-                    # Check if deleter is Admin or has the Admin Role
-                    is_admin_deletion = False
-                    if deleter.guild_permissions.administrator:
-                        is_admin_deletion = True
-                    elif ADMIN_ROLE_ID:
-                        role = message.guild.get_role(ADMIN_ROLE_ID)
-                        if role and role in deleter.roles:
-                            is_admin_deletion = True
-                    
-                    if is_admin_deletion:
-                        ignore_deletion = True
-                    break # Found the entry
+                    # Verify it's recent (within 5 seconds)
+                    time_diff = datetime.now(timezone.utc) - entry.created_at
+                    if time_diff.total_seconds() < 5:
+                        deleter = entry.user
+                        break
         except Exception as e:
             print(f"Error checking audit logs: {e}")
 
-        if ignore_deletion:
-            return
+        # If no audit log entry found, assume the author deleted it themselves
+        if deleter is None:
+            deleter = message.author
+
+        # FINAL CHECK: If the person who deleted it is an Admin, DO NOT LOG.
+        if is_user_admin(deleter):
+            return 
 
         # --- LOGGING ---
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
@@ -624,14 +637,29 @@ async def set_vc_role(ctx, role: discord.Role):
 
 @bot.command(name='setadmin')
 @commands.has_permissions(administrator=True)
-async def set_admin_role(ctx, role: discord.Role):
-    """^setadmin <@Role>: Sets a role that can use award/remove points commands."""
-    global ADMIN_ROLE_ID
+async def manage_admin_roles(ctx, action: str, role: discord.Role):
+    """^setadmin <add/remove> <@Role>: Manages roles that can use point commands."""
+    global ADMIN_ROLE_IDS
     
-    ADMIN_ROLE_ID = role.id
-    await save_config_to_db()
+    action = action.lower()
     
-    await ctx.send(f"✅ Bot Admin role set to **{role.name}**. Members with this role can now award/remove points.")
+    if action == 'add':
+        if role.id not in ADMIN_ROLE_IDS:
+            ADMIN_ROLE_IDS.append(role.id)
+            await save_config_to_db()
+            await ctx.send(f"✅ Role **{role.name}** added to Bot Admins.")
+        else:
+            await ctx.send(f"⚠️ Role **{role.name}** is already a Bot Admin.")
+            
+    elif action == 'remove':
+        if role.id in ADMIN_ROLE_IDS:
+            ADMIN_ROLE_IDS.remove(role.id)
+            await save_config_to_db()
+            await ctx.send(f"✅ Role **{role.name}** removed from Bot Admins.")
+        else:
+            await ctx.send(f"⚠️ Role **{role.name}** was not in the Bot Admin list.")
+    else:
+        await ctx.send(f"❌ Invalid action. Usage: `{PREFIX}setadmin add <@role>` or `{PREFIX}setadmin remove <@role>`.")
 
 @bot.command(name='setleaderboard')
 @commands.has_permissions(administrator=True) 
@@ -919,9 +947,12 @@ async def show_settings_cmd(ctx):
     vc_role = f"<@&{VC_NOTIFY_ROLE_ID}>" if VC_NOTIFY_ROLE_ID else "None"
     embed.add_field(name="🔊 VC Notify Role", value=vc_role, inline=False)
 
-    # Admin Role
-    admin_role = f"<@&{ADMIN_ROLE_ID}>" if ADMIN_ROLE_ID else "None"
-    embed.add_field(name="🛡️ Bot Admin Role", value=admin_role, inline=False)
+    # Admin Roles
+    if ADMIN_ROLE_IDS:
+        admin_roles_str = ", ".join([f"<@&{rid}>" for rid in ADMIN_ROLE_IDS])
+    else:
+        admin_roles_str = "None"
+    embed.add_field(name="🛡️ Bot Admin Roles", value=admin_roles_str, inline=False)
 
     # Log Channel
     log_channel = f"<#{LOG_CHANNEL_ID}>" if LOG_CHANNEL_ID else "None"
