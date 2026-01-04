@@ -7,7 +7,6 @@ import json
 import os
 import time
 from datetime import datetime, timezone 
-# import motor.motor_asyncio 
 import asyncio 
 
 # --- FUNCTION LIST ---
@@ -20,12 +19,13 @@ import asyncio
 #    - load_initial_config, save_config_to_db
 # 3. Utility:
 #    - add_points_to_cache, is_category_tracked, _create_leaderboard_embed
+#    - refresh_group_leaderboard (NEW), check_admin_perms (NEW)
 # 4. Events:
 #    - on_ready, on_message, on_message_delete, on_reaction_add, on_voice_state_update
 # 5. Tasks:
 #    - voice_time_checker, point_saver
 # 6. Commands:
-#    - set_log_channel, set_vc_role, set_permanent_leaderboard, clear_permanent_leaderboard
+#    - set_log_channel, set_vc_role, set_admin_role (NEW), set_permanent_leaderboard, clear_permanent_leaderboard
 #    - clear_group_points, show_leaderboard, rename_group, track_category
 #    - untrack_category, award_points, remove_points, show_points, show_settings_cmd, set_points
 
@@ -52,11 +52,10 @@ DEFAULT_POINT_VALUES = {
     'reaction_receive': 2
 }
 
-# UPDATED: Now with 3 Groups!
 DEFAULT_GROUPS = {
     "Group1": {"name": "Meowzers", "categories": []},
     "Group2": {"name": "Arfers", "categories": []},
-    "Group3": {"name": "Chirpers", "categories": []} # New Group 3!
+    "Group3": {"name": "Buggies", "categories": []}
 }
 
 # Global in-memory variables
@@ -67,8 +66,9 @@ POINT_CACHE = {}
 LEADERBOARD_CACHE = {}   
 PERMANENT_LEADERBOARDS = {} 
 
-# Globals for Voice Notification & Logging
+# Globals for Roles & Logging
 VC_NOTIFY_ROLE_ID = None
+ADMIN_ROLE_ID = None # New: Role ID for point admins
 VC_ACTIVE_STATE = {} 
 LOG_CHANNEL_ID = None 
 
@@ -188,7 +188,7 @@ class DatabaseHandler:
 # --- 5. CONFIGURATION LOADING ---
 async def load_initial_config():
     """Loads initial configuration from MongoDB."""
-    global POINT_VALUES, LEADERBOARD_GROUPS, LEADERBOARD_CACHE, PERMANENT_LEADERBOARDS, VC_NOTIFY_ROLE_ID, LOG_CHANNEL_ID
+    global POINT_VALUES, LEADERBOARD_GROUPS, LEADERBOARD_CACHE, PERMANENT_LEADERBOARDS, VC_NOTIFY_ROLE_ID, LOG_CHANNEL_ID, ADMIN_ROLE_ID
     
     config = await db.load_config()
 
@@ -199,10 +199,7 @@ async def load_initial_config():
     
     # Load GROUPS
     groups_config = config.get('LEADERBOARD_GROUPS', DEFAULT_GROUPS)
-    
-    # This ensures that Group1, Group2, AND Group3 are all loaded correctly
     temp_groups = {key: data for key, data in groups_config.items() if key in DEFAULT_GROUPS} 
-    
     LEADERBOARD_GROUPS.update(DEFAULT_GROUPS.copy())
     LEADERBOARD_GROUPS.update(temp_groups)
     
@@ -210,11 +207,10 @@ async def load_initial_config():
     LEADERBOARD_CACHE = config.get('LEADERBOARD_CACHE', {})
     PERMANENT_LEADERBOARDS = config.get('PERMANENT_LEADERBOARDS', {})
 
-    # Load VC Notify Role
+    # Load Roles and Channels
     VC_NOTIFY_ROLE_ID = config.get('VC_NOTIFY_ROLE_ID', None)
-
-    # Load Log Channel ID
     LOG_CHANNEL_ID = config.get('LOG_CHANNEL_ID', None)
+    ADMIN_ROLE_ID = config.get('ADMIN_ROLE_ID', None)
     
     print("Configuration loaded from MongoDB.")
 
@@ -226,7 +222,8 @@ async def save_config_to_db():
         'LEADERBOARD_CACHE': LEADERBOARD_CACHE,
         'PERMANENT_LEADERBOARDS': PERMANENT_LEADERBOARDS,
         'VC_NOTIFY_ROLE_ID': VC_NOTIFY_ROLE_ID,
-        'LOG_CHANNEL_ID': LOG_CHANNEL_ID
+        'LOG_CHANNEL_ID': LOG_CHANNEL_ID,
+        'ADMIN_ROLE_ID': ADMIN_ROLE_ID
     }
     await db.save_config(config)
 
@@ -292,6 +289,54 @@ async def _create_leaderboard_embed(guild, group_key):
     embed.set_footer(text=f"Refreshes every 5 minutes")
     return embed
 
+async def refresh_group_leaderboard(guild, group_key):
+    """Refreshes the leaderboard cache and permanent message for a specific group immediately."""
+    guild_id = str(guild.id)
+    
+    # 1. Fetch latest data from DB
+    leader_data = await db.get_all_group_points(guild_id, group_key)
+    current_unix_timestamp = int(datetime.now(timezone.utc).timestamp())
+    
+    if guild_id not in LEADERBOARD_CACHE:
+        LEADERBOARD_CACHE[guild_id] = {}
+        
+    if leader_data:
+        sorted_users = sorted(leader_data.items(), key=lambda item: item[1], reverse=True)
+        LEADERBOARD_CACHE[guild_id][group_key] = {
+            'updated': current_unix_timestamp, 
+            'top_users': sorted_users[:10]
+        }
+    else:
+        LEADERBOARD_CACHE[guild_id][group_key] = {
+            'updated': current_unix_timestamp, 
+            'top_users': []
+        }
+        
+    # 2. Update Permanent Message if it exists
+    if group_key in PERMANENT_LEADERBOARDS:
+        data = PERMANENT_LEADERBOARDS[group_key]
+        try:
+            channel = bot.get_channel(data['channel_id'])
+            if channel and channel.guild:
+                message = await channel.fetch_message(data['message_id'])
+                new_embed = await _create_leaderboard_embed(channel.guild, group_key)
+                await message.edit(embed=new_embed)
+        except Exception as e:
+            print(f"Error immediate update for {group_key}: {e}")
+
+# --- Custom Check for Admins or Permitted Roles ---
+def check_admin_perms():
+    def predicate(ctx):
+        # 1. Check if user is an actual Administrator
+        if ctx.author.guild_permissions.administrator:
+            return True
+        # 2. Check if user has the assigned Admin Role
+        if ADMIN_ROLE_ID:
+            role = ctx.guild.get_role(ADMIN_ROLE_ID)
+            if role and role in ctx.author.roles:
+                return True
+        return False
+    return commands.check(predicate)
 
 # --- 7. EVENTS ---
 
@@ -356,6 +401,35 @@ async def on_message_delete(message):
         return
         
     if LOG_CHANNEL_ID:
+        # --- NEW LOGIC: Check who deleted the message ---
+        ignore_deletion = False
+        try:
+            # Wait a brief moment for audit log to populate
+            await asyncio.sleep(0.5) 
+            async for entry in message.guild.audit_logs(limit=1, action=discord.AuditLogAction.message_delete):
+                # Check if the audit log entry targets this message (rough check via target user and time)
+                if entry.target.id == message.author.id:
+                    deleter = entry.user
+                    
+                    # Check if deleter is Admin or has the Admin Role
+                    is_admin_deletion = False
+                    if deleter.guild_permissions.administrator:
+                        is_admin_deletion = True
+                    elif ADMIN_ROLE_ID:
+                        role = message.guild.get_role(ADMIN_ROLE_ID)
+                        if role and role in deleter.roles:
+                            is_admin_deletion = True
+                    
+                    if is_admin_deletion:
+                        ignore_deletion = True
+                    break # Found the entry
+        except Exception as e:
+            print(f"Error checking audit logs: {e}")
+
+        if ignore_deletion:
+            return
+
+        # --- LOGGING ---
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             embed = discord.Embed(
@@ -548,6 +622,16 @@ async def set_vc_role(ctx, role: discord.Role):
     
     await ctx.send(f"✅ VC Notification role set to **{role.name}**. I will ping them in the VC chat when 2+ people hang out for 5 minutes!")
 
+@bot.command(name='setadmin')
+@commands.has_permissions(administrator=True)
+async def set_admin_role(ctx, role: discord.Role):
+    """^setadmin <@Role>: Sets a role that can use award/remove points commands."""
+    global ADMIN_ROLE_ID
+    
+    ADMIN_ROLE_ID = role.id
+    await save_config_to_db()
+    
+    await ctx.send(f"✅ Bot Admin role set to **{role.name}**. Members with this role can now award/remove points.")
 
 @bot.command(name='setleaderboard')
 @commands.has_permissions(administrator=True) 
@@ -746,48 +830,55 @@ async def untrack_category(ctx, group_key: str = None, category_id: int = None):
     await ctx.send(f"🛑 Stopped tracking category ID `{category_id}` for group **{LEADERBOARD_GROUPS[group_key]['name']}**.")
 
 @bot.command(name='award')
-@commands.has_permissions(administrator=True) 
+@check_admin_perms()
 async def award_points(ctx, group_key: str, member: discord.Member, points: int):
-    """^award <GroupKey> <@user> <points>: ADMIN command: Manually awards points to a user in a specific group."""
+    """^award <GroupKey> <@user> <points>: Awards points and updates leaderboard immediately."""
     
     group_key = group_key.capitalize()
     if group_key not in LEADERBOARD_GROUPS:
         group_list = ', '.join(LEADERBOARD_GROUPS.keys())
-        await ctx.send(f"❌ Leaderboard group **{group_key}** not found. Available groups: **{list}**.")
+        await ctx.send(f"❌ Leaderboard group **{group_key}** not found. Available groups: **{group_list}**.")
         return
 
     if points <= 0:
         await ctx.send("❌ You must award a positive number of points.")
         return
 
-    add_points_to_cache(member.id, ctx.guild.id, group_key, points)
+    # 1. Update DB directly (Bypass Cache for immediate effect)
+    await db.update_user_points(ctx.guild.id, group_key, member.id, points)
     
-    if not point_saver.is_running():
-        await point_saver()
+    # 2. Flush any pending cache for this user to DB (to avoid overwriting later)
+    # Note: We don't strictly need to flush cache here if we just updated DB, 
+    # but we should ensure the cache doesn't have stale 0 data that overwrites.
+    # Simpler approach: Just refresh the leaderboard from DB now.
+    
+    # 3. Refresh Leaderboard & Permanent Message Immediately
+    await refresh_group_leaderboard(ctx.guild, group_key)
 
-    await ctx.send(f"✨ Successfully awarded **{points}** points to **{member.display_name}** in **{LEADERBOARD_GROUPS[group_key]['name']}**! The leaderboard will update immediately.")
+    await ctx.send(f"✅ Awarded **{points}** points to **{member.display_name}** in **{LEADERBOARD_GROUPS[group_key]['name']}**.")
     
 @bot.command(name='remove')
-@commands.has_permissions(administrator=True) 
+@check_admin_perms()
 async def remove_points(ctx, group_key: str, member: discord.Member, points: int):
-    """^remove <GroupKey> <@user> <points>: ADMIN command: Manually removes points from a user in a specific group."""
+    """^remove <GroupKey> <@user> <points>: Removes points and updates leaderboard immediately."""
     
     group_key = group_key.capitalize()
     if group_key not in LEADERBOARD_GROUPS:
         group_list = ', '.join(LEADERBOARD_GROUPS.keys())
-        await ctx.send(f"❌ Leaderboard group **{group_key}** not found. Available groups: **{list}**.")
+        await ctx.send(f"❌ Leaderboard group **{group_key}** not found. Available groups: **{group_list}**.")
         return
 
     if points <= 0:
         await ctx.send("❌ You must specify a positive number of points to remove.")
         return
 
-    add_points_to_cache(member.id, ctx.guild.id, group_key, -points)
+    # 1. Update DB directly (negative points)
+    await db.update_user_points(ctx.guild.id, group_key, member.id, -points)
     
-    if not point_saver.is_running():
-        await point_saver()
+    # 2. Refresh Leaderboard & Permanent Message Immediately
+    await refresh_group_leaderboard(ctx.guild, group_key)
 
-    await ctx.send(f"🗑️ Successfully removed **{points}** points from **{member.display_name}** in **{LEADERBOARD_GROUPS[group_key]['name']}**! The leaderboard will update immediately.")
+    await ctx.send(f"✅ Removed **{points}** points from **{member.display_name}** in **{LEADERBOARD_GROUPS[group_key]['name']}**.")
 
 @bot.command(name='showpoints')
 async def show_points(ctx):
@@ -827,6 +918,10 @@ async def show_settings_cmd(ctx):
     # VC Role
     vc_role = f"<@&{VC_NOTIFY_ROLE_ID}>" if VC_NOTIFY_ROLE_ID else "None"
     embed.add_field(name="🔊 VC Notify Role", value=vc_role, inline=False)
+
+    # Admin Role
+    admin_role = f"<@&{ADMIN_ROLE_ID}>" if ADMIN_ROLE_ID else "None"
+    embed.add_field(name="🛡️ Bot Admin Role", value=admin_role, inline=False)
 
     # Log Channel
     log_channel = f"<#{LOG_CHANNEL_ID}>" if LOG_CHANNEL_ID else "None"
