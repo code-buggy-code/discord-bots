@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 import asyncio 
 
 # --- FUNCTION LIST ---
-# To ensure nothing is lost, here is the list of all functions in this bot:
 # 1. DatabaseHandler Class:
 #    - __init__, _load_from_file, _save_to_file
 #    - load_config, save_config, load_stickies, save_sticky, delete_sticky
@@ -19,16 +18,17 @@ import asyncio
 #    - load_initial_config, save_config_to_db
 # 3. Utility:
 #    - add_points_to_cache, is_category_tracked, _create_leaderboard_embed
-#    - refresh_group_leaderboard, check_admin_perms, is_user_admin (NEW)
+#    - refresh_group_leaderboard, check_admin_perms, is_user_admin
 # 4. Events:
 #    - on_ready, on_message, on_message_delete, on_reaction_add, on_voice_state_update
 # 5. Tasks:
 #    - voice_time_checker, point_saver
 # 6. Commands:
-#    - set_log_channel, set_vc_role, manage_admin_roles (UPDATED), set_permanent_leaderboard
+#    - set_log_channel, set_vc_role, manage_admin_roles, set_permanent_leaderboard
 #    - clear_permanent_leaderboard, clear_group_points, show_leaderboard
 #    - rename_group, track_category, untrack_category, award_points, remove_points
 #    - show_points, show_settings_cmd, set_points
+#    - vcignore (NEW)
 
 # --- 1. CONFIGURATION SETTINGS ---
 PREFIX = "^" 
@@ -69,9 +69,10 @@ PERMANENT_LEADERBOARDS = {}
 
 # Globals for Roles & Logging
 VC_NOTIFY_ROLE_ID = None
-ADMIN_ROLE_IDS = [] # Changed to a list to support multiple roles
+ADMIN_ROLE_IDS = [] 
 VC_ACTIVE_STATE = {} 
 LOG_CHANNEL_ID = None 
+VC_IGNORE_CHANNELS = [] # NEW: List of ignored VC IDs
 
 # Global DB handler instance
 db = None
@@ -189,7 +190,7 @@ class DatabaseHandler:
 # --- 5. CONFIGURATION LOADING ---
 async def load_initial_config():
     """Loads initial configuration from MongoDB."""
-    global POINT_VALUES, LEADERBOARD_GROUPS, LEADERBOARD_CACHE, PERMANENT_LEADERBOARDS, VC_NOTIFY_ROLE_ID, LOG_CHANNEL_ID, ADMIN_ROLE_IDS
+    global POINT_VALUES, LEADERBOARD_GROUPS, LEADERBOARD_CACHE, PERMANENT_LEADERBOARDS, VC_NOTIFY_ROLE_ID, LOG_CHANNEL_ID, ADMIN_ROLE_IDS, VC_IGNORE_CHANNELS
     
     config = await db.load_config()
 
@@ -211,6 +212,7 @@ async def load_initial_config():
     # Load Roles and Channels
     VC_NOTIFY_ROLE_ID = config.get('VC_NOTIFY_ROLE_ID', None)
     LOG_CHANNEL_ID = config.get('LOG_CHANNEL_ID', None)
+    VC_IGNORE_CHANNELS = config.get('VC_IGNORE_CHANNELS', [])
     
     # Load Admin Role IDs (Handle legacy single ID or new list)
     admin_data = config.get('ADMIN_ROLE_IDS', None)
@@ -234,7 +236,8 @@ async def save_config_to_db():
         'PERMANENT_LEADERBOARDS': PERMANENT_LEADERBOARDS,
         'VC_NOTIFY_ROLE_ID': VC_NOTIFY_ROLE_ID,
         'LOG_CHANNEL_ID': LOG_CHANNEL_ID,
-        'ADMIN_ROLE_IDS': ADMIN_ROLE_IDS 
+        'ADMIN_ROLE_IDS': ADMIN_ROLE_IDS,
+        'VC_IGNORE_CHANNELS': VC_IGNORE_CHANNELS
     }
     await db.save_config(config)
 
@@ -418,41 +421,43 @@ async def on_message_delete(message):
         return
         
     if LOG_CHANNEL_ID:
+        # 1. Determine who deleted the message
         deleter = None
         
+        # Try to find the audit log entry
         try:
-            # Wait a brief moment for audit log to populate (it can be slow)
-            await asyncio.sleep(0.5) 
-            async for entry in message.guild.audit_logs(limit=1, action=discord.AuditLogAction.message_delete):
-                # Check if the audit log entry targets this message's author
-                if entry.target.id == message.author.id:
-                    # Verify it's recent (within 5 seconds)
-                    time_diff = datetime.now(timezone.utc) - entry.created_at
-                    if time_diff.total_seconds() < 5:
+            # We fetch a few logs to be safe
+            async for entry in message.guild.audit_logs(limit=6, action=discord.AuditLogAction.message_delete):
+                # Target of the deletion is the author of the message
+                if entry.target.id == message.author.id and entry.extra.channel.id == message.channel.id:
+                    # Check timestamp roughly (within 20s)
+                    if (datetime.now(timezone.utc) - entry.created_at).total_seconds() < 20:
                         deleter = entry.user
                         break
         except Exception as e:
             print(f"Error checking audit logs: {e}")
 
-        # If no audit log entry found, assume the author deleted it themselves
+        # If no audit log, it's likely the author themselves
         if deleter is None:
             deleter = message.author
 
-        # FINAL CHECK: If the person who deleted it is an Admin, DO NOT LOG.
+        # 2. FINAL CHECK: If the person who deleted it is an Admin, DO NOT LOG.
         if is_user_admin(deleter):
             return 
 
-        # --- LOGGING ---
+        # 3. Log format
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             embed = discord.Embed(
-                title="🗑️ Message Deleted",
-                description=message.content if message.content else "*[No Text Content]*",
+                description=(
+                    f"**Author:** {message.author.mention}\n"
+                    f"**Deleted By:** {deleter.mention}\n"
+                    f"**Channel:** {message.channel.mention}\n"
+                    f"**Message:** {message.content if message.content else '*[No Text Content]*'}"
+                ),
                 color=discord.Color.red(),
                 timestamp=datetime.now(timezone.utc)
             )
-            embed.set_author(name=f"{message.author} (ID: {message.author.id})", icon_url=message.author.display_avatar.url)
-            embed.add_field(name="Channel", value=message.channel.mention, inline=True)
             
             if message.attachments:
                 att_list = "\n".join([f"[{a.filename}]({a.url})" for a in message.attachments])
@@ -531,22 +536,45 @@ async def voice_time_checker():
             for vc in guild.voice_channels:
                 non_bot_members = [m for m in vc.members if not m.bot]
                 
-                if len(non_bot_members) >= 2:
-                    if vc.id not in VC_ACTIVE_STATE:
-                        VC_ACTIVE_STATE[vc.id] = {'start_time': current_time, 'pinged': False}
-                    else:
-                        data = VC_ACTIVE_STATE[vc.id]
-                        elapsed = current_time - data['start_time']
-                        
-                        if elapsed >= 300 and not data['pinged']:
-                            try:
-                                await vc.send(role.mention)
-                                data['pinged'] = True
-                            except Exception as e:
-                                print(f"Error pinging role in VC {vc.name}: {e}")
-                else:
+                # CLEANUP: If empty, remove state.
+                # This ensures the timer completely resets ONLY when the channel goes empty.
+                if len(non_bot_members) == 0:
                     if vc.id in VC_ACTIVE_STATE:
                         del VC_ACTIVE_STATE[vc.id]
+                    continue
+                
+                # If channel is ignored, skip notification logic
+                if vc.id in VC_IGNORE_CHANNELS:
+                    continue
+
+                # INITIALIZE STATE
+                if vc.id not in VC_ACTIVE_STATE:
+                    VC_ACTIVE_STATE[vc.id] = {'start_time': None, 'pinged': False}
+                
+                state = VC_ACTIVE_STATE[vc.id]
+                
+                # If we already pinged, do NOT ping again (unless state was cleared by emptiness)
+                if state['pinged']:
+                    continue
+
+                if len(non_bot_members) >= 2:
+                    # Condition Met: Start/Check Timer
+                    if state['start_time'] is None:
+                        state['start_time'] = current_time
+                    
+                    elapsed = current_time - state['start_time']
+                    if elapsed >= 300:
+                        try:
+                            await vc.send(role.mention)
+                            state['pinged'] = True
+                        except Exception as e:
+                            print(f"Error pinging role in VC {vc.name}: {e}")
+                else:
+                    # Condition Broken (len=1), but not Empty.
+                    # We do NOT reset start_time to None here based on the requirement:
+                    # "only restart the timer when the channel is empty"
+                    # This implies the timer persists even if it drops to 1 person.
+                    pass
 
 
 @tasks.loop(seconds=300.0) 
@@ -634,6 +662,32 @@ async def set_vc_role(ctx, role: discord.Role):
     await save_config_to_db()
     
     await ctx.send(f"✅ VC Notification role set to **{role.name}**. I will ping them in the VC chat when 2+ people hang out for 5 minutes!")
+
+@bot.command(name='vcignore')
+@commands.has_permissions(administrator=True)
+async def vcignore(ctx, action: str, channel_id: int):
+    """^vcignore <add/remove> <ChannelID>: Stops the VC ping for specific channels (Points still count!)."""
+    global VC_IGNORE_CHANNELS
+    
+    action = action.lower()
+    
+    if action == 'add':
+        if channel_id not in VC_IGNORE_CHANNELS:
+            VC_IGNORE_CHANNELS.append(channel_id)
+            await save_config_to_db()
+            await ctx.send(f"✅ Channel ID `{channel_id}` added to ignore list. I won't ping the role there anymore!")
+        else:
+            await ctx.send(f"⚠️ Channel ID `{channel_id}` is already ignored, buggy!")
+            
+    elif action == 'remove':
+        if channel_id in VC_IGNORE_CHANNELS:
+            VC_IGNORE_CHANNELS.remove(channel_id)
+            await save_config_to_db()
+            await ctx.send(f"✅ Channel ID `{channel_id}` removed from ignore list. Pings enabled!")
+        else:
+            await ctx.send(f"⚠️ Channel ID `{channel_id}` wasn't in the list.")
+    else:
+        await ctx.send(f"❌ Usage: `{PREFIX}vcignore add <ID>` or `{PREFIX}vcignore remove <ID>`")
 
 @bot.command(name='setadmin')
 @commands.has_permissions(administrator=True)
@@ -957,6 +1011,13 @@ async def show_settings_cmd(ctx):
     # Log Channel
     log_channel = f"<#{LOG_CHANNEL_ID}>" if LOG_CHANNEL_ID else "None"
     embed.add_field(name="🗑️ Log Channel", value=log_channel, inline=False)
+    
+    # Ignored VCs
+    if VC_IGNORE_CHANNELS:
+        ignored_list = ", ".join([f"`{c}`" for c in VC_IGNORE_CHANNELS])
+    else:
+        ignored_list = "None"
+    embed.add_field(name="🔇 Ignored VC IDs", value=ignored_list, inline=False)
     
     await ctx.send(embed=embed)
 
