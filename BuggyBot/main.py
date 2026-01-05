@@ -625,7 +625,8 @@ async def purge(ctx, target: typing.Union[discord.Member, str], scope: typing.Un
         return True
     for c in chans:
         try:
-            deleted = await c.purge(limit=None, check=should_delete)
+            # FIX: Use 'check=check' instead of 'check=should_delete'
+            deleted = await c.purge(limit=None, check=check)
             total += len(deleted)
         except: pass
     await ctx.send(f"✅ Deleted {total} messages.")
