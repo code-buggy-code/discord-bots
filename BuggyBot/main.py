@@ -170,27 +170,43 @@ class DatabaseHandler:
         data = {}
         collection = self.data.get("sticky_messages", [])
         for doc in collection:
-            time_val = doc.get('last_time')
-            if isinstance(time_val, str):
-                try:
-                    time_val = datetime.datetime.fromisoformat(time_val)
-                except:
-                    time_val = datetime.datetime.now()
-            # Ensure keys are integers (channel IDs)
-            data[int(doc['_id'])] = [doc['content'], doc['last_msg_id'], time_val]
+            try:
+                cid = int(doc.get('_id', 0))
+                if cid == 0: continue
+                
+                time_val = doc.get('last_time')
+                
+                # Robust time parsing
+                if time_val is None:
+                    time_val = 0.0 # Force a reset if missing
+                elif isinstance(time_val, str):
+                    try:
+                        time_val = datetime.datetime.fromisoformat(time_val).timestamp()
+                    except:
+                        time_val = datetime.datetime.utcnow().timestamp()
+                
+                # Ensure we have all fields
+                content = doc.get('content', "")
+                last_msg_id = doc.get('last_msg_id', 0)
+                
+                data[cid] = [content, last_msg_id, time_val]
+            except Exception as e:
+                print(f"Skipping bad sticky entry: {e}")
+                
         return data
 
     async def save_sticky(self, channel_id, content, last_msg_id, last_time):
-        new_doc = {"_id": channel_id, "content": content, "last_msg_id": last_msg_id, "last_time": last_time}
+        new_doc = {"_id": int(channel_id), "content": content, "last_msg_id": last_msg_id, "last_time": last_time}
         collection = self.data.get("sticky_messages", [])
-        collection = [d for d in collection if d.get("_id") != channel_id]
+        # Remove old entry safely
+        collection = [d for d in collection if int(d.get("_id", 0)) != int(channel_id)]
         collection.append(new_doc)
         self.data["sticky_messages"] = collection
         self._save_to_file()
 
     async def delete_sticky(self, channel_id):
         collection = self.data.get("sticky_messages", [])
-        collection = [d for d in collection if d.get("_id") != channel_id]
+        collection = [d for d in collection if int(d.get("_id", 0)) != int(channel_id)]
         self.data["sticky_messages"] = collection
         self._save_to_file()
 
@@ -198,7 +214,9 @@ class DatabaseHandler:
         data = {}
         collection = self.data.get("votes", [])
         for doc in collection:
-            data[int(doc['_id'])] = doc.get('voters', [])
+            try:
+                data[int(doc['_id'])] = doc.get('voters', [])
+            except: pass
         return data
 
     async def save_vote(self, target_id, voters):
