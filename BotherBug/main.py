@@ -440,7 +440,8 @@ async def on_message(message):
                 except Exception as e:
                     print(f"Failed to process image: {e}")
         
-        if not files_to_send and "http" not in new_text:
+        # --- FIX: Removed 'not files_to_send' so we can add random images even if user sent one ---
+        if "http" not in new_text:
             docs = await get_guild_images(message.guild.id)
             if docs:
                 if random.random() < 0.3:
