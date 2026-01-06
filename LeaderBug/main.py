@@ -28,7 +28,7 @@ import asyncio
 #    - clear_permanent_leaderboard, clear_group_points, show_leaderboard
 #    - rename_group, track_category, untrack_category, award_points, remove_points
 #    - show_points, show_settings_cmd, set_points
-#    - vcignore (NEW)
+#    - vcignore
 
 # --- 1. CONFIGURATION SETTINGS ---
 PREFIX = "^" 
@@ -73,7 +73,7 @@ ADMIN_ROLE_IDS = []
 VC_ACTIVE_STATE = {} 
 VC_VERIFIED_EMPTY = set() # Tracks channels we have seen empty since restart
 LOG_CHANNEL_ID = None 
-VC_IGNORE_CHANNELS = [] # NEW: List of ignored VC IDs
+VC_IGNORE_CHANNELS = [] # List of ignored VC IDs
 
 # Global DB handler instance
 db = None
@@ -319,7 +319,7 @@ async def refresh_group_leaderboard(guild, group_key):
         sorted_users = sorted(leader_data.items(), key=lambda item: item[1], reverse=True)
         LEADERBOARD_CACHE[guild_id][group_key] = {
             'updated': current_unix_timestamp, 
-            'top_users': sorted_users[:10]
+            'top_users': sorted_users[:20]  # Show Top 20
         }
     else:
         LEADERBOARD_CACHE[guild_id][group_key] = {
@@ -578,9 +578,6 @@ async def voice_time_checker():
                             print(f"Error pinging role in VC {vc.name}: {e}")
                 else:
                     # Condition Broken (len=1), but not Empty.
-                    # We do NOT reset start_time to None here based on the requirement:
-                    # "only restart the timer when the channel is empty"
-                    # This implies the timer persists even if it drops to 1 person.
                     pass
 
 
@@ -617,7 +614,7 @@ async def point_saver():
                 
                 new_leaderboard_cache[guild_id][group_key] = {
                     'updated': current_unix_timestamp, 
-                    'top_users': sorted_users[:10]
+                    'top_users': sorted_users[:20]  # Show Top 20
                 }
             
     LEADERBOARD_CACHE = new_leaderboard_cache
@@ -1043,7 +1040,7 @@ async def set_points(ctx, activity: str = None, value: int = None):
     }
     
     if not activity or value is None:
-        await ctx.send(f"❌ Please provide an activity and a new value. Usage: `{PREFIX}setpoints <activity> <value>`\nAvailable activities: `message`, `attachment`, `react_add`, `react_receive`, `voice`.")
+        await ctx.send(f"❌ Please provide an activity and a new value. Usage: `{PREFIX}setpoints <activity> <value>`\nAvailable activities: `message`, `attachment`, `react_add`, `react_receive`, or `voice`.")
         return
     
     activity_key = activity_map.get(activity.lower())
