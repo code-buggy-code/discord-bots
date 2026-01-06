@@ -121,7 +121,8 @@ def get_random_case(text):
         return "" 
     words = []
     for word in text.split():
-        if word.startswith("http"):
+        # Preserve URLs and Mentions (<@...>)
+        if word.startswith("http") or (word.startswith("<@") and word.endswith(">")):
             words.append(word)
         else:
             scrambled = "".join(random.choice([char.upper(), char.lower()]) for char in word)
@@ -404,6 +405,12 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # Debug print so you can check your console if text is empty!
+    if message.content:
+        print(f"Processing message: {message.content[:20]}...")
+    else:
+        print("Processing message with NO content (Attachment only?)")
+
     settings = await get_settings(message.guild.id)
 
     # 0. Handle Ping Forwarding
@@ -431,7 +438,10 @@ async def on_message(message):
         new_text = get_random_case(message.content)
         
         files_to_send = []
+        user_sent_attachment = False
+
         if message.attachments:
+            user_sent_attachment = True
             for attachment in message.attachments:
                 try:
                     data = await attachment.read()
@@ -440,14 +450,17 @@ async def on_message(message):
                 except Exception as e:
                     print(f"Failed to process image: {e}")
         
-        # --- FIX: Removed 'not files_to_send' so we can add random images even if user sent one ---
-        if "http" not in new_text:
-            docs = await get_guild_images(message.guild.id)
-            if docs:
-                if random.random() < 0.3:
-                    random_url = random.choice(docs)
-                    new_text += f"\n{random_url}"
+        # --- FIX: Only add random troll image if user did NOT send an attachment ---
+        if not user_sent_attachment:
+            if "http" not in new_text:
+                docs = await get_guild_images(message.guild.id)
+                if docs:
+                    # 30% chance to add a random image
+                    if random.random() < 0.3:
+                        random_url = random.choice(docs)
+                        new_text += f"\n{random_url}"
 
+        # If text is empty (due to intent/bug) AND no files, we can't do anything.
         if not new_text and not files_to_send:
             return
 
