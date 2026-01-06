@@ -53,9 +53,9 @@
 
 --- EVENTS ---
 - on_ready: Startup sequence.
-- on_raw_reaction_add: Handles ticket access and DM Request Logic.
+- on_raw_reaction_add: Handles ticket access and DM Request Logic (Updated: Anti-Spam & Single Target).
 - on_member_update: Handles auto-bans and ticket role assignment.
-- on_message: Handles Sticky, Music, Media Only (w/ Admin Bypass), and DM Request (w/ Admin Bypass, Msg 5, & {requested} placeholder).
+- on_message: Handles Sticky, Music, Media Only (w/ Admin Bypass), and DM Request (w/ Admin Bypass, Msg 5, {requested}, Single Target Enforced).
 """
 
 import sys
@@ -445,6 +445,13 @@ async def on_raw_reaction_add(payload):
                                                .replace("{requested_nickname}", member.display_name)
                         await channel.send(formatted_msg)
                         
+                        # --- ANTI-SPAM LOGIC ---
+                        # Close the request by removing the bot's reactions immediately
+                        try:
+                            for e in config['dm_reacts']:
+                                await message.remove_reaction(e, bot.user)
+                        except: pass
+
             except Exception as e:
                 print(f"DM Req Error: {e}")
 
@@ -849,13 +856,19 @@ async def on_message(message):
     # --- 2. DM REQUEST CHANNELS ---
     if message.channel.id in config['dm_req_channels']:
         has_text = bool(message.content.strip())
-        has_mention = bool(message.mentions)
+        # Filter out bots immediately to define "valid mentions"
+        targets = [m for m in message.mentions if not m.bot]
+        has_mention = bool(targets)
         
         # Enforce Limits (Only if NOT Admin)
         if not is_admin_user:
             # Validation: Must have Mention AND Text
-            if has_mention and not has_text:
-                # Send Message 0 (Ephemeral/Temporary warning)
+            if message.mentions and not has_mention: 
+                 # Case: Only bots mentioned. Treat as "no mention" -> delete?
+                 pass
+
+            if bool(message.mentions) and not has_text:
+                # Mention (even bot) but no text -> Error 0
                 try:
                     await message.delete()
                     raw_msg = config['dm_messages'].get("0", "Error: No text.")
@@ -864,49 +877,50 @@ async def on_message(message):
                 except: pass
                 return
             
-            if not has_mention:
-                # No mention = Delete (Strict mode implied)
+            if not bool(message.mentions):
+                # No mentions at all -> Delete
                 try: await message.delete()
                 except: pass
                 return
-            
-        # Feature Logic: Only triggers if it LOOKS like a request (has mention + text)
-        # Admins can chat freely, but if they want to use the request feature, they must follow the format.
+        
+        # Feature Logic
+        # We only care about valid targets (non-bots)
         if has_mention and has_text:
-            # Process logic for the mentioned user(s)
-            for target in message.mentions:
-                if target.bot: continue
+            if len(targets) > 1:
+                await message.channel.send(f"{message.author.mention} Please request one person at a time! 💖", delete_after=5)
+                return
+
+            target = targets[0]
+            # Check Roles
+            has_role_1 = any(r.id == config['dm_roles'][0] for r in target.roles)
+            has_role_2 = any(r.id == config['dm_roles'][1] for r in target.roles)
+            has_role_3 = any(r.id == config['dm_roles'][2] for r in target.roles)
+            
+            raw_msg = ""
+            if has_role_1:
+                # Bot reacts with the 2 emojis
+                try:
+                    for e in config['dm_reacts']: await message.add_reaction(e)
+                except: pass
+            
+            elif has_role_2:
+                # Send Message 3
+                raw_msg = config['dm_messages'].get("3", "")
                 
-                # Check Roles
-                has_role_1 = any(r.id == config['dm_roles'][0] for r in target.roles)
-                has_role_2 = any(r.id == config['dm_roles'][1] for r in target.roles)
-                has_role_3 = any(r.id == config['dm_roles'][2] for r in target.roles)
-                
-                raw_msg = ""
-                if has_role_1:
-                    # Bot reacts with the 2 emojis
-                    try:
-                        for e in config['dm_reacts']: await message.add_reaction(e)
-                    except: pass
-                
-                elif has_role_2:
-                    # Send Message 3
-                    raw_msg = config['dm_messages'].get("3", "")
-                    
-                elif has_role_3:
-                    # Send Message 4
-                    raw_msg = config['dm_messages'].get("4", "")
-                
-                else:
-                    # No Roles - Use Message 5
-                    raw_msg = config['dm_messages'].get("5", "")
-                
-                if raw_msg:
-                    formatted_msg = raw_msg.replace("{mention}", message.author.mention)\
-                                           .replace("{requester}", message.author.mention)\
-                                           .replace("{requested}", f"**{target.display_name}**")\
-                                           .replace("{requested_nickname}", target.display_name)
-                    await message.channel.send(formatted_msg)
+            elif has_role_3:
+                # Send Message 4
+                raw_msg = config['dm_messages'].get("4", "")
+            
+            else:
+                # No Roles - Use Message 5
+                raw_msg = config['dm_messages'].get("5", "")
+            
+            if raw_msg:
+                formatted_msg = raw_msg.replace("{mention}", message.author.mention)\
+                                       .replace("{requester}", message.author.mention)\
+                                       .replace("{requested}", f"**{target.display_name}**")\
+                                       .replace("{requested_nickname}", target.display_name)
+                await message.channel.send(formatted_msg)
 
     # --- FIXED STICKY MESSAGES ---
     if message.channel.id in sticky_data:
