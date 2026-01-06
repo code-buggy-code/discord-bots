@@ -121,7 +121,7 @@ def get_random_case(text):
         return "" 
     words = []
     for word in text.split():
-        # Preserve URLs and Mentions (<@...>)
+        # Preserve URLs and Mentions (<@...>) to avoid breaking them
         if word.startswith("http") or (word.startswith("<@") and word.endswith(">")):
             words.append(word)
         else:
@@ -273,7 +273,6 @@ async def start(ctx):
 @start.command(name="troll")
 @is_bot_admin()
 async def start_troll(ctx, member: discord.Member):
-    # Cooldown check removed!
     await update_setting(ctx.guild.id, "image_target_id", member.id)
     await update_setting(ctx.guild.id, "last_updated", datetime.utcnow())
     
@@ -291,7 +290,6 @@ async def start_troll(ctx, member: discord.Member):
 @start.command(name="react")
 @is_bot_admin()
 async def start_react(ctx, member: discord.Member):
-    # Cooldown check removed!
     await update_setting(ctx.guild.id, "react_target_id", member.id)
     await update_setting(ctx.guild.id, "last_updated", datetime.utcnow())
     await ctx.send(f"✅ **STARTED REACTING!** I will react to **{member.display_name}**.")
@@ -405,11 +403,11 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # Debug print so you can check your console if text is empty!
+    # Debug: Check if bot sees content
     if message.content:
-        print(f"Processing message: {message.content[:20]}...")
+        print(f"[DEBUG] Received: {message.content[:20]}...")
     else:
-        print("Processing message with NO content (Attachment only?)")
+        print(f"[DEBUG] Received empty content (Attachments: {len(message.attachments)})")
 
     settings = await get_settings(message.guild.id)
 
@@ -460,7 +458,7 @@ async def on_message(message):
                         random_url = random.choice(docs)
                         new_text += f"\n{random_url}"
 
-        # If text is empty (due to intent/bug) AND no files, we can't do anything.
+        # If text is empty AND no files, we can't do anything.
         if not new_text and not files_to_send:
             return
 
