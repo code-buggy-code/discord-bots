@@ -28,7 +28,7 @@ class AsyncIterator:
         self.idx += 1
         return item
     
-    # --- FIX: This is the missing function that caused the crash! ---
+    # --- FIX: Kept this to prevent crashes when looking up images ---
     async def to_list(self, length=None):
         return self.items
 
@@ -143,16 +143,14 @@ async def get_settings(guild_id):
             "image_target_id": None, 
             "react_target_id": None, 
             "reaction": None,
-            "last_updated": None,
-            "log_channel_id": None # Added logging channel
+            "last_updated": None
         }
     else:
         result = {
             "image_target_id": data.get("image_target_id"),
             "react_target_id": data.get("react_target_id"),
             "reaction": data.get("reaction"),
-            "last_updated": data.get("last_updated"),
-            "log_channel_id": data.get("log_channel_id")
+            "last_updated": data.get("last_updated")
         }
     
     settings_cache[guild_id] = result
@@ -170,7 +168,6 @@ async def get_guild_images(guild_id):
         return images_cache[guild_id]
 
     cursor = images_col.find({"guild_id": guild_id})
-    # This line previously crashed for normal text because .to_list() was missing!
     docs = await cursor.to_list(length=None) 
     urls = [doc["url"] for doc in docs]
     
@@ -190,23 +187,6 @@ async def remove_image_from_cache(guild_id, url):
         if url in images_cache[guild_id]:
             images_cache[guild_id].remove(url)
     return result.deleted_count > 0
-
-# --- LOGGING HELPER ---
-async def log_debug(guild_id, text):
-    """Sends a debug message to the configured log channel."""
-    settings = await get_settings(guild_id)
-    log_channel_id = settings.get("log_channel_id")
-    
-    if log_channel_id:
-        channel = bot.get_channel(log_channel_id)
-        if channel:
-            try:
-                # Send minimal log to channel
-                await channel.send(f"🐛 `{text}`")
-            except Exception:
-                pass # If we can't send logs, don't crash the bot
-    
-    print(f"[DEBUG] {text}") # Always print to console
 
 # --- ADMIN CHECK ---
 def is_bot_admin():
@@ -257,7 +237,6 @@ async def on_member_update(before, after):
         if after.timed_out_until:
             try:
                 await after.timeout(None, reason="BotherBug Anti-Mute Protection")
-                await log_debug(after.guild.id, f"Protected {after.display_name} from timeout.")
             except Exception as e:
                 print(f"Failed to remove timeout from target: {e}")
 
@@ -265,7 +244,6 @@ async def on_member_update(before, after):
         if after.voice and after.voice.mute:
             try:
                 await after.edit(mute=False, reason="BotherBug Anti-Mute Protection")
-                await log_debug(after.guild.id, f"Protected {after.display_name} from voice mute.")
             except Exception as e:
                 print(f"Failed to remove voice mute from target: {e}")
 
@@ -299,15 +277,13 @@ async def start(ctx):
 async def start_troll(ctx, member: discord.Member):
     await update_setting(ctx.guild.id, "image_target_id", member.id)
     await update_setting(ctx.guild.id, "last_updated", datetime.utcnow())
-    # Save the channel ID for logging!
-    await update_setting(ctx.guild.id, "log_channel_id", ctx.channel.id)
     
     try:
         await ctx.guild.me.edit(nick=member.display_name)
         if member.avatar:
             avatar_bytes = await member.avatar.read()
             await bot.user.edit(avatar=avatar_bytes)
-        await ctx.send(f"✅ **STARTED TROLLING!** I have stolen **{member.display_name}'s** face! (Logs will appear here)")
+        await ctx.send(f"✅ **STARTED TROLLING!** I have stolen **{member.display_name}'s** face!")
     except discord.HTTPException as e:
         await ctx.send(f"⚠️ Discord blocked the face change (Rate Limit?): {e}")
     except Exception as e:
@@ -318,7 +294,6 @@ async def start_troll(ctx, member: discord.Member):
 async def start_react(ctx, member: discord.Member):
     await update_setting(ctx.guild.id, "react_target_id", member.id)
     await update_setting(ctx.guild.id, "last_updated", datetime.utcnow())
-    await update_setting(ctx.guild.id, "log_channel_id", ctx.channel.id)
     await ctx.send(f"✅ **STARTED REACTING!** I will react to **{member.display_name}**.")
 
 # --- STOP COMMANDS ---
@@ -454,51 +429,46 @@ async def on_message(message):
     # 2. Handle Image/Message Swap
     if settings.get("image_target_id") == message.author.id:
         
-        # Log that we saw the target speak
-        await log_debug(message.guild.id, f"Target {message.author.name} spoke: '{message.content}'")
+        new_text = get_random_case(message.content)
+        
+        files_to_send = []
+        user_sent_attachment = False
+
+        if message.attachments:
+            user_sent_attachment = True
+            for attachment in message.attachments:
+                try:
+                    data = await attachment.read()
+                    f = discord.File(io.BytesIO(data), filename=attachment.filename)
+                    files_to_send.append(f)
+                except Exception as e:
+                    print(f"Failed to process image: {e}")
+        
+        # Only add random troll image if user did NOT send an attachment
+        if not user_sent_attachment:
+            if "http" not in new_text:
+                docs = await get_guild_images(message.guild.id)
+                if docs:
+                    if random.random() < 0.3:
+                        random_url = random.choice(docs)
+                        new_text += f"\n{random_url}"
+
+        # If text is empty AND no files, we can't do anything.
+        if not new_text and not files_to_send:
+            return
+
+        ref = None
+        should_mention_author = True 
+
+        if message.reference:
+            ref = message.reference
+            if ref.cached_message:
+                if ref.cached_message.author not in message.mentions:
+                    should_mention_author = False
+            elif not message.mentions:
+                should_mention_author = False
 
         try:
-            new_text = get_random_case(message.content)
-            
-            files_to_send = []
-            user_sent_attachment = False
-
-            if message.attachments:
-                user_sent_attachment = True
-                for attachment in message.attachments:
-                    try:
-                        data = await attachment.read()
-                        f = discord.File(io.BytesIO(data), filename=attachment.filename)
-                        files_to_send.append(f)
-                    except Exception as e:
-                        await log_debug(message.guild.id, f"Failed to process image: {e}")
-            
-            # --- FIX: Only add random troll image if user did NOT send an attachment ---
-            if not user_sent_attachment:
-                if "http" not in new_text:
-                    docs = await get_guild_images(message.guild.id)
-                    if docs:
-                        if random.random() < 0.3:
-                            random_url = random.choice(docs)
-                            new_text += f"\n{random_url}"
-
-            # If text is empty AND no files, we can't do anything.
-            if not new_text and not files_to_send:
-                await log_debug(message.guild.id, "Message was empty (or invisible to bot), skipping.")
-                return
-
-            ref = None
-            should_mention_author = True 
-
-            if message.reference:
-                ref = message.reference
-                if ref.cached_message:
-                    if ref.cached_message.author not in message.mentions:
-                        should_mention_author = False
-                elif not message.mentions:
-                    should_mention_author = False
-
-            
             await message.delete()
             await message.channel.send(
                 content=new_text,
@@ -506,12 +476,9 @@ async def on_message(message):
                 reference=ref,
                 mention_author=should_mention_author 
             )
-            await log_debug(message.guild.id, "Swapped message successfully!")
-
-        except discord.Forbidden:
-             await log_debug(message.guild.id, "Error: I don't have permission to delete the message!")
         except Exception as e:
-            await log_debug(message.guild.id, f"CRASHED while swapping: {e}")
+            # We print to console only if something really bad happens
+            print(f"Failed to send swap: {e}")
 
 # --- RUN ---
 bot.run(BOT_TOKEN)
