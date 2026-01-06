@@ -71,6 +71,7 @@ PERMANENT_LEADERBOARDS = {}
 VC_NOTIFY_ROLE_ID = None
 ADMIN_ROLE_IDS = [] 
 VC_ACTIVE_STATE = {} 
+VC_VERIFIED_EMPTY = set() # Tracks channels we have seen empty since restart
 LOG_CHANNEL_ID = None 
 VC_IGNORE_CHANNELS = [] # NEW: List of ignored VC IDs
 
@@ -536,13 +537,19 @@ async def voice_time_checker():
             for vc in guild.voice_channels:
                 non_bot_members = [m for m in vc.members if not m.bot]
                 
-                # CLEANUP: If empty, remove state.
+                # CLEANUP: If empty, remove state AND mark as verified empty (safe to ping later).
                 # This ensures the timer completely resets ONLY when the channel goes empty.
                 if len(non_bot_members) == 0:
+                    VC_VERIFIED_EMPTY.add(vc.id)
                     if vc.id in VC_ACTIVE_STATE:
                         del VC_ACTIVE_STATE[vc.id]
                     continue
                 
+                # If we haven't seen this channel empty since the bot started, 
+                # we assume it's a pre-existing session and skip tracking to avoid restart-pings.
+                if vc.id not in VC_VERIFIED_EMPTY:
+                    continue
+
                 # If channel is ignored, skip notification logic
                 if vc.id in VC_IGNORE_CHANNELS:
                     continue
