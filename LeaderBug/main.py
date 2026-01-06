@@ -364,7 +364,7 @@ def check_admin_perms():
 @bot.event
 async def on_ready():
     """Handles MongoDB connection and starts tasks."""
-    global db
+    global db, LEADERBOARD_CACHE
     
     try:
         print(f"Attempting to connect to MongoDB...")
@@ -372,6 +372,31 @@ async def on_ready():
         print("Successfully connected to MongoDB!")
 
         await load_initial_config()
+        
+        # --- REFRESH CACHE IMMEDIATELY ---
+        # This ensures we don't serve a stale "Top 10" list from the DB before the first 5-min cycle runs.
+        print("Performing initial leaderboard cache refresh for Top 20...")
+        current_unix_timestamp = int(datetime.now(timezone.utc).timestamp())
+        
+        for guild in bot.guilds:
+            guild_id = str(guild.id)
+            if guild_id not in LEADERBOARD_CACHE:
+                LEADERBOARD_CACHE[guild_id] = {}
+
+            for group_key in LEADERBOARD_GROUPS:
+                leader_data = await db.get_all_group_points(guild_id, group_key)
+                if leader_data:
+                    sorted_users = sorted(leader_data.items(), key=lambda item: item[1], reverse=True)
+                    LEADERBOARD_CACHE[guild_id][group_key] = {
+                        'updated': current_unix_timestamp, 
+                        'top_users': sorted_users[:20] 
+                    }
+                else:
+                    LEADERBOARD_CACHE[guild_id][group_key] = {
+                        'updated': current_unix_timestamp, 
+                        'top_users': []
+                    }
+        print("Initial cache refresh complete.")
 
     except Exception as e:
         print(f"FATAL ERROR: Could not connect to MongoDB or load config. Bot will not function.")
