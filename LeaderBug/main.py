@@ -13,7 +13,7 @@ import asyncio
 # 1. DatabaseHandler Class:
 #    - __init__, _load_from_file, _save_to_file
 #    - load_config, save_config, load_stickies, save_sticky, delete_sticky
-#    - update_user_points, get_all_group_points, clear_points_by_group
+#    - update_user_points, get_all_group_points, get_user_points, clear_points_by_group
 # 2. Configuration:
 #    - load_initial_config, save_config_to_db
 # 3. Utility:
@@ -24,7 +24,7 @@ import asyncio
 # 5. Tasks:
 #    - voice_time_checker, point_saver
 # 6. Commands:
-#    - set_log_channel, set_vc_role, manage_admin_roles, set_permanent_leaderboard
+#    - points (NEW), set_log_channel, set_vc_role, manage_admin_roles, set_permanent_leaderboard
 #    - clear_permanent_leaderboard, clear_group_points, show_leaderboard
 #    - rename_group, track_category, untrack_category, award_points, remove_points
 #    - show_points, show_settings_cmd, set_points
@@ -172,6 +172,17 @@ class DatabaseHandler:
         for doc in collection:
             if doc.get("guild_id") == guild_id and doc.get("group_key") == group_key:
                 results[doc["user_id"]] = doc.get("points", 0)
+        return results
+
+    async def get_user_points(self, guild_id, user_id):
+        """Retrieves points for a single user across all groups."""
+        guild_id = str(guild_id)
+        user_id = str(user_id)
+        collection = self.data.get("user_points", [])
+        results = {}
+        for doc in collection:
+            if doc.get("guild_id") == guild_id and doc.get("user_id") == user_id:
+                results[doc["group_key"]] = int(doc.get("points", 0))
         return results
 
     async def clear_points_by_group(self, guild_id, group_key):
@@ -374,7 +385,6 @@ async def on_ready():
         await load_initial_config()
         
         # --- REFRESH CACHE IMMEDIATELY ---
-        # This ensures we don't serve a stale "Top 10" list from the DB before the first 5-min cycle runs.
         print("Performing initial leaderboard cache refresh for Top 20...")
         current_unix_timestamp = int(datetime.now(timezone.utc).timestamp())
         
@@ -669,6 +679,43 @@ async def point_saver():
 
 
 # --- 9. COMMANDS ---
+
+@bot.command(name='points')
+async def check_points(ctx, member: discord.Member = None):
+    """^points [User]: Displays the points for you or a specific user."""
+    target = member or ctx.author
+    guild_id = str(ctx.guild.id)
+    user_id = str(target.id)
+    
+    # 1. Get DB Points
+    scores = await db.get_user_points(guild_id, user_id)
+    
+    # 2. Add Cached Points (Pending Save)
+    if guild_id in POINT_CACHE:
+        for group_key, users in POINT_CACHE[guild_id].items():
+            if user_id in users:
+                if group_key not in scores:
+                    scores[group_key] = 0
+                scores[group_key] += users[user_id]
+                
+    # Filter to only show groups that are currently tracked
+    final_scores = {k: v for k, v in scores.items() if k in LEADERBOARD_GROUPS}
+    
+    if not final_scores:
+        await ctx.send(f"🥺 **{target.display_name}** hasn't earned any points yet!")
+        return
+        
+    embed = discord.Embed(
+        title=f"🌟 Points for {target.display_name}",
+        color=discord.Color.purple()
+    )
+    
+    for group_key, points in final_scores.items():
+        group_name = LEADERBOARD_GROUPS.get(group_key, {}).get('name', group_key)
+        embed.add_field(name=group_name, value=f"{points} Points", inline=False)
+        
+    await ctx.send(embed=embed)
+
 
 @bot.command(name='setlogchannel')
 @commands.has_permissions(administrator=True)
