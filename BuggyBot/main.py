@@ -46,7 +46,7 @@
 - !listmediaonly: Lists media-only channels.
 - !dmroles <r1> <r2> <r3>: Sets the 3 DM roles.
 - !dmreacts <e1> <e2>: Sets the 2 DM reaction emojis.
-- !setdmmessage <0-4> <msg>: Sets DM preset messages.
+- !setdmmessage <0-5> <msg>: Sets DM preset messages.
 - !dmreq <add/remove> <channel_id>: Sets DM request channels.
 - !listdmreq: Lists DM request settings.
 
@@ -54,7 +54,7 @@
 - on_ready: Startup sequence.
 - on_raw_reaction_add: Handles ticket access and DM Request Logic.
 - on_member_update: Handles auto-bans and ticket role assignment.
-- on_message: Handles Sticky, Music, Media Only (w/ 5min timer), and DM Request logic.
+- on_message: Handles Sticky, Music, Media Only (w/ Admin Bypass), and DM Request (w/ Admin Bypass + Message 5).
 """
 
 import sys
@@ -118,7 +118,8 @@ DEFAULT_CONFIG = {
         "1": "Request Accepted!",
         "2": "Request Denied.",
         "3": "DM Request (Role 2) sent to {requested_nickname}.",
-        "4": "DM Request (Role 3) sent to {requested_nickname}."
+        "4": "DM Request (Role 3) sent to {requested_nickname}.",
+        "5": "sorry they dont have dm roles yet :sob:, buggy's working on this"
     }
 }
 
@@ -252,6 +253,10 @@ async def load_initial_config():
     if "dm_roles" not in config: config["dm_roles"] = [0, 0, 0]
     if "dm_reacts" not in config: config["dm_reacts"] = ["👍", "👎"]
     if "dm_messages" not in config: config["dm_messages"] = DEFAULT_CONFIG["dm_messages"]
+    
+    # Add message 5 if missing from old config
+    if "5" not in config["dm_messages"]:
+        config["dm_messages"]["5"] = DEFAULT_CONFIG["dm_messages"]["5"]
 
     if "_id" in config: del config["_id"]
     print("Configuration loaded.")
@@ -715,7 +720,7 @@ async def dmreacts(ctx, e1: str, e2: str):
 @bot.command()
 @is_admin()
 async def setdmmessage(ctx, index: str, *, message: str):
-    if index not in ["0", "1", "2", "3", "4"]: return await ctx.send("❌ Index must be 0-4.")
+    if index not in ["0", "1", "2", "3", "4", "5"]: return await ctx.send("❌ Index must be 0-5.")
     config['dm_messages'][index] = message
     await save_config_to_db()
     await ctx.send(f"✅ **Message {index} Updated.**")
@@ -803,77 +808,87 @@ async def on_message(message):
         try: await message.delete(); return
         except: pass
 
+    # Check for Admin Privileges (Bypass)
+    is_admin_user = (
+        message.author.guild_permissions.administrator or 
+        any(role.id in config['admin_role_id'] for role in message.author.roles)
+    )
+
     # --- 1. MEDIA ONLY CHANNELS ---
     if message.channel.id in config['media_only_channels']:
-        is_media = message.attachments or message.embeds or "http" in message.content
-        
-        if is_media:
-            # User posted media, grant them 5 minutes of chat text
-            media_cooldowns[(message.author.id, message.channel.id)] = datetime.datetime.utcnow().timestamp()
-        else:
-            # User posted text only. Check if they have "credit"
-            last_time = media_cooldowns.get((message.author.id, message.channel.id), 0)
-            if datetime.datetime.utcnow().timestamp() - last_time > 300: # 300 seconds = 5 mins
-                try: await message.delete()
-                except: pass
-                return
-            # If we get here, they are within the 5 minute window, so we allow it.
+        if not is_admin_user:
+            is_media = message.attachments or message.embeds or "http" in message.content
+            
+            if is_media:
+                # User posted media, grant them 5 minutes of chat text
+                media_cooldowns[(message.author.id, message.channel.id)] = datetime.datetime.utcnow().timestamp()
+            else:
+                # User posted text only. Check if they have "credit"
+                last_time = media_cooldowns.get((message.author.id, message.channel.id), 0)
+                if datetime.datetime.utcnow().timestamp() - last_time > 300: # 300 seconds = 5 mins
+                    try: await message.delete()
+                    except: pass
+                    return
+                # If we get here, they are within the 5 minute window, so we allow it.
 
     # --- 2. DM REQUEST CHANNELS ---
     if message.channel.id in config['dm_req_channels']:
         has_text = bool(message.content.strip())
         has_mention = bool(message.mentions)
         
-        # Validation: Must have Mention AND Text
-        if has_mention and not has_text:
-            # Send Message 0 (Ephemeral/Temporary warning)
-            # "if it's only a mention without text, message 0 is sent"
-            try:
-                await message.delete()
-                raw_msg = config['dm_messages'].get("0", "Error: No text.")
-                formatted_msg = raw_msg.replace("{mention}", message.author.mention).replace("{requester}", message.author.mention)
-                await message.channel.send(formatted_msg, delete_after=5)
-            except: pass
-            return
-        
-        if not has_mention:
-            # No mention = Delete (Strict mode implied)
-            try: await message.delete()
-            except: pass
-            return
-            
-        # If we got here, it's valid (Mention + Text)
-        # Process logic for the mentioned user(s)
-        for target in message.mentions:
-            if target.bot: continue
-            
-            # Check Roles
-            has_role_1 = any(r.id == config['dm_roles'][0] for r in target.roles)
-            has_role_2 = any(r.id == config['dm_roles'][1] for r in target.roles)
-            has_role_3 = any(r.id == config['dm_roles'][2] for r in target.roles)
-            
-            raw_msg = ""
-            if has_role_1:
-                # Bot reacts with the 2 emojis
+        # Enforce Limits (Only if NOT Admin)
+        if not is_admin_user:
+            # Validation: Must have Mention AND Text
+            if has_mention and not has_text:
+                # Send Message 0 (Ephemeral/Temporary warning)
                 try:
-                    for e in config['dm_reacts']: await message.add_reaction(e)
+                    await message.delete()
+                    raw_msg = config['dm_messages'].get("0", "Error: No text.")
+                    formatted_msg = raw_msg.replace("{mention}", message.author.mention).replace("{requester}", message.author.mention)
+                    await message.channel.send(formatted_msg, delete_after=5)
                 except: pass
+                return
             
-            elif has_role_2:
-                # Send Message 3
-                raw_msg = config['dm_messages'].get("3", "")
+            if not has_mention:
+                # No mention = Delete (Strict mode implied)
+                try: await message.delete()
+                except: pass
+                return
+            
+        # Feature Logic: Only triggers if it LOOKS like a request (has mention + text)
+        # Admins can chat freely, but if they want to use the request feature, they must follow the format.
+        if has_mention and has_text:
+            # Process logic for the mentioned user(s)
+            for target in message.mentions:
+                if target.bot: continue
                 
-            elif has_role_3:
-                # Send Message 4
-                raw_msg = config['dm_messages'].get("4", "")
-            
-            else:
-                # No Roles
-                await message.channel.send("sorry they dont have dm roles yet :sob:, buggy's working on this")
-            
-            if raw_msg:
-                formatted_msg = raw_msg.replace("{mention}", message.author.mention).replace("{requester}", message.author.mention).replace("{requested_nickname}", target.display_name)
-                await message.channel.send(formatted_msg)
+                # Check Roles
+                has_role_1 = any(r.id == config['dm_roles'][0] for r in target.roles)
+                has_role_2 = any(r.id == config['dm_roles'][1] for r in target.roles)
+                has_role_3 = any(r.id == config['dm_roles'][2] for r in target.roles)
+                
+                raw_msg = ""
+                if has_role_1:
+                    # Bot reacts with the 2 emojis
+                    try:
+                        for e in config['dm_reacts']: await message.add_reaction(e)
+                    except: pass
+                
+                elif has_role_2:
+                    # Send Message 3
+                    raw_msg = config['dm_messages'].get("3", "")
+                    
+                elif has_role_3:
+                    # Send Message 4
+                    raw_msg = config['dm_messages'].get("4", "")
+                
+                else:
+                    # No Roles - Use Message 5
+                    raw_msg = config['dm_messages'].get("5", "")
+                
+                if raw_msg:
+                    formatted_msg = raw_msg.replace("{mention}", message.author.mention).replace("{requester}", message.author.mention).replace("{requested_nickname}", target.display_name)
+                    await message.channel.send(formatted_msg)
 
     # --- FIXED STICKY MESSAGES ---
     if message.channel.id in sticky_data:
