@@ -47,6 +47,7 @@
 - !dmroles <r1> <r2> <r3>: Sets the 3 DM roles.
 - !dmreacts <e1> <e2>: Sets the 2 DM reaction emojis.
 - !setdmmessage <0-5> <msg>: Sets DM preset messages.
+- !listdmmessages: Lists all current DM preset messages.
 - !dmreq <add/remove> <channel_id>: Sets DM request channels.
 - !listdmreq: Lists DM request settings.
 
@@ -54,7 +55,7 @@
 - on_ready: Startup sequence.
 - on_raw_reaction_add: Handles ticket access and DM Request Logic.
 - on_member_update: Handles auto-bans and ticket role assignment.
-- on_message: Handles Sticky, Music, Media Only (w/ Admin Bypass), and DM Request (w/ Admin Bypass + Message 5).
+- on_message: Handles Sticky, Music, Media Only (w/ Admin Bypass), and DM Request (w/ Admin Bypass, Msg 5, & {requested} placeholder).
 """
 
 import sys
@@ -117,8 +118,8 @@ DEFAULT_CONFIG = {
         "0": "{mention} Please include text with your mention to make a request.",
         "1": "Request Accepted!",
         "2": "Request Denied.",
-        "3": "DM Request (Role 2) sent to {requested_nickname}.",
-        "4": "DM Request (Role 3) sent to {requested_nickname}.",
+        "3": "DM Request (Role 2) sent to {requested}.",
+        "4": "DM Request (Role 3) sent to {requested}.",
         "5": "sorry they dont have dm roles yet :sob:, buggy's working on this"
     }
 }
@@ -438,7 +439,10 @@ async def on_raw_reaction_add(payload):
                     
                     if msg_index != -1:
                         raw_msg = config['dm_messages'].get(msg_index, "")
-                        formatted_msg = raw_msg.replace("{mention}", message.author.mention).replace("{requester}", message.author.mention).replace("{requested_nickname}", member.display_name)
+                        formatted_msg = raw_msg.replace("{mention}", message.author.mention)\
+                                               .replace("{requester}", message.author.mention)\
+                                               .replace("{requested}", f"**{member.display_name}**")\
+                                               .replace("{requested_nickname}", member.display_name)
                         await channel.send(formatted_msg)
                         
             except Exception as e:
@@ -727,6 +731,17 @@ async def setdmmessage(ctx, index: str, *, message: str):
 
 @bot.command()
 @is_admin()
+async def listdmmessages(ctx):
+    text = "**📨 Current DM Messages:**\n"
+    # Ensure order 0-5
+    for i in range(6):
+        key = str(i)
+        if key in config['dm_messages']:
+            text += f"**{key}:** {config['dm_messages'][key]}\n"
+    await ctx.send(text)
+
+@bot.command()
+@is_admin()
 async def dmreq(ctx, action: str, channel_id: str):
     cid = clean_id(channel_id)
     if action.lower() == "add":
@@ -797,7 +812,7 @@ async def help(ctx):
     embed.add_field(name="📌 Sticky", value="`!stick`, `!unstick`, `!liststickies`", inline=False)
     embed.add_field(name="🧹 Purge", value="`!purge <user/nonmedia/all> <limit/scope>`", inline=False)
     embed.add_field(name="📷 Media Only", value="`!mediaonly`, `!listmediaonly`", inline=False)
-    embed.add_field(name="📨 DM Requests", value="`!dmreq`, `!dmroles`, `!setdmmessage`, `!listdmreq`", inline=False)
+    embed.add_field(name="📨 DM Requests", value="`!dmreq`, `!dmroles`, `!setdmmessage`, `!listdmmessages`, `!listdmreq`", inline=False)
     embed.add_field(name="♻️ System", value="`!sync`", inline=False)
     await ctx.send(embed=embed)
 
@@ -887,7 +902,10 @@ async def on_message(message):
                     raw_msg = config['dm_messages'].get("5", "")
                 
                 if raw_msg:
-                    formatted_msg = raw_msg.replace("{mention}", message.author.mention).replace("{requester}", message.author.mention).replace("{requested_nickname}", target.display_name)
+                    formatted_msg = raw_msg.replace("{mention}", message.author.mention)\
+                                           .replace("{requester}", message.author.mention)\
+                                           .replace("{requested}", f"**{target.display_name}**")\
+                                           .replace("{requested_nickname}", target.display_name)
                     await message.channel.send(formatted_msg)
 
     # --- FIXED STICKY MESSAGES ---
