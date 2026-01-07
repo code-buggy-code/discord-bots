@@ -492,9 +492,10 @@ async def on_member_update(before, after):
 @bot.command()
 @is_admin()
 async def sync(ctx):
+    """(Admin) Pulls changes from GitHub and restarts all bots."""
     await ctx.send("♻️ **Syncing System...**\n1. Pulling code from GitHub...\n2. Restarting all bots (Give me 10 seconds!)")
     os.system("git pull")
-    os.system("pkill -f main.py")
+    os.system("pkill -f main.py") # Kills everyone; Manager will revive them!
 
 @bot.command()
 @is_admin()
@@ -855,20 +856,26 @@ async def on_message(message):
 
     # --- 2. DM REQUEST CHANNELS ---
     if message.channel.id in config['dm_req_channels']:
-        has_text = bool(message.content.strip())
-        # Filter out bots immediately to define "valid mentions"
-        targets = [m for m in message.mentions if not m.bot]
-        has_mention = bool(targets)
         
-        # Enforce Limits (Only if NOT Admin)
+        # 1. STRICT PARSING
+        # We strictly check if the message starts with <@ID> ... 
+        # This regex ensures it is a typed mention and NOT a reply.
+        cleaned_content = message.content.strip()
+        match = re.match(r'^<@!?(\d+)>\s+(.+)', cleaned_content, re.DOTALL)
+        
+        valid_request = False
+        target_member = None
+        
+        if match:
+            user_id = int(match.group(1))
+            target_member = message.guild.get_member(user_id)
+            if target_member and not target_member.bot:
+                valid_request = True
+        
+        # 2. ENFORCE RESTRICTIONS (Delete if bad)
         if not is_admin_user:
-            # Validation: Must have Mention AND Text
-            if message.mentions and not has_mention: 
-                 # Case: Only bots mentioned. Treat as "no mention" -> delete?
-                 pass
-
-            if bool(message.mentions) and not has_text:
-                # Mention (even bot) but no text -> Error 0
+            if not valid_request:
+                # If they didn't follow the format (or just replied), delete it.
                 try:
                     await message.delete()
                     raw_msg = config['dm_messages'].get("0", "Error: No text.")
@@ -876,21 +883,12 @@ async def on_message(message):
                     await message.channel.send(formatted_msg, delete_after=5)
                 except: pass
                 return
-            
-            if not bool(message.mentions):
-                # No mentions at all -> Delete
-                try: await message.delete()
-                except: pass
-                return
         
-        # Feature Logic
-        # We only care about valid targets (non-bots)
-        if has_mention and has_text:
-            if len(targets) > 1:
-                await message.channel.send(f"{message.author.mention} Please request one person at a time! 💖", delete_after=5)
-                return
-
-            target = targets[0]
+        # 3. FEATURE LOGIC (Only run if it IS a valid request format)
+        # Even admins need to use the format if they want the bot to react/send DM msgs.
+        # If admin types random text, it won't be deleted, but it won't trigger this either.
+        if valid_request and target_member:
+            target = target_member
             # Check Roles
             has_role_1 = any(r.id == config['dm_roles'][0] for r in target.roles)
             has_role_2 = any(r.id == config['dm_roles'][1] for r in target.roles)
