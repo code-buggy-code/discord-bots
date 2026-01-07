@@ -173,11 +173,12 @@ class TaskView(discord.ui.View):
         return bar
 
     async def update_message(self, interaction, finished=False, congratulation=None):
-        # Line 1: User Mention
+        # Line 1: User Mention with Count
         # Line 2: ANSI Bar
         # Line 3: Buttons OR Congratulation Message
         
-        content = f"<@{self.user_id}>'s tasks\n{self.get_ansi_bar()}"
+        completed_tasks = self.state.count(1) + self.state.count(2)
+        content = f"<@{self.user_id}>'s tasks: {completed_tasks}/{self.total}\n{self.get_ansi_bar()}"
         
         if finished and congratulation:
             # Replace buttons with text on the "3rd line"
@@ -367,7 +368,7 @@ async def on_message(message):
             
             # Initial Message
             msg = await message.channel.send(
-                f"<@{message.author.id}>'s tasks\n{view.get_ansi_bar()}",
+                f"<@{message.author.id}>'s tasks: 0/{num}\n{view.get_ansi_bar()}",
                 view=view
             )
             
