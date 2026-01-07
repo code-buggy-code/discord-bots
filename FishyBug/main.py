@@ -1,6 +1,11 @@
 import sys
 sys.path.append('..')
-from secret_bot import TOKEN
+try:
+    from secret_bot import TOKEN
+except ImportError:
+    print("Error: secret_bot.py not found. Please create it with TOKEN = '...'")
+    sys.exit()
+
 import discord
 from discord.ext import commands
 import json
@@ -8,19 +13,20 @@ import os
 import asyncio
 
 # --- FUNCTION LIST ---
-# 1. LocalCollection Class: Handles database.json interactions (load, save, find, update).
-# 2. load_config(): Loads the bot settings from the database into memory.
+# 1. LocalCollection Class: Handles database.json interactions.
+# 2. load_config(): Loads the bot settings from the database.
 # 3. save_config_cache(): Updates the database with the current memory cache.
-# 4. Command: settings(): Shows all current configurations.
-# 5. Command: setmessage(message_id): Sets the ID of the message to listen to.
-# 6. Command: setreaction(emoji): Sets the specific emoji required to open a ticket.
-# 7. Command: nameticket(name): Sets the naming format for tickets.
-# 8. Command: ticketquestion(question): Sets the opening prompt text inside the ticket.
-# 9. Command: setcategory(category_id): Sets the category where tickets are created.
-# 10. Command: setrole(role): Sets the role to give upon verification.
-# 11. Event: on_ready(): Startup sequence.
-# 12. Event: on_raw_reaction_add(payload): Handles ticket creation and reaction removal.
-# 13. Event: on_message(message): Handles age verification logic (Ban vs Role).
+# 4. Command: settings(): Shows configurations.
+# 5. Command: setmessage(message_id): Sets the ID to react to.
+# 6. Command: setreaction(emoji): Sets the emoji to react with.
+# 7. Command: nameticket(name): Sets ticket channel name format.
+# 8. Command: ticketquestion(question): Sets the opening prompt.
+# 9. Command: setcategory(category_id): Sets ticket category.
+# 10. Command: setrole(role): Sets the role to GIVE.
+# 11. Command: setderole(role): Sets the role to REMOVE (New!).
+# 12. Event: on_ready(): Startup sequence.
+# 13. Event: on_raw_reaction_add(payload): Handles ticket creation.
+# 14. Event: on_message(message): Handles age verification logic.
 
 # --- 1. DATABASE HANDLER ---
 DB_FILE = "database.json"
@@ -67,7 +73,6 @@ class LocalCollection:
 
         self._save_all(all_data)
 
-# Using a unique collection name for this bot
 config_col = LocalCollection("nsfw_ticket_config")
 
 # --- 2. BOT SETUP ---
@@ -86,6 +91,7 @@ config_cache = {
     "ticket_question": "{user}, please enter your age to verify access.",
     "ticket_category_id": None,
     "verified_role_id": None,
+    "derole_id": None, # <--- NEW FIELD
     "active_tickets": [] 
 }
 
@@ -98,6 +104,7 @@ async def load_config():
         config_cache["ticket_question"] = data.get("ticket_question", "{user}, please enter your age to verify access.")
         config_cache["ticket_category_id"] = data.get("ticket_category_id")
         config_cache["verified_role_id"] = data.get("verified_role_id")
+        config_cache["derole_id"] = data.get("derole_id") # <--- Load New Field
         config_cache["active_tickets"] = data.get("active_tickets", [])
     else:
         await save_config_cache()
@@ -120,7 +127,8 @@ async def settings(ctx):
     msg += f"**Ticket Name:** `{config_cache['ticket_name_format']}`\n"
     msg += f"**Question:** `{config_cache['ticket_question']}`\n"
     msg += f"**Category ID:** `{config_cache['ticket_category_id']}`\n"
-    msg += f"**Role ID:** `{config_cache['verified_role_id']}`"
+    msg += f"**Give Role ID:** `{config_cache['verified_role_id']}`\n"
+    msg += f"**Remove Role ID:** `{config_cache['derole_id']}`"
     await ctx.send(msg)
 
 @bot.command()
@@ -169,7 +177,14 @@ async def setcategory(ctx, category_id: str):
 async def setrole(ctx, role: discord.Role):
     config_cache['verified_role_id'] = role.id
     await save_config_cache()
-    await ctx.send(f"✅ Verified users will receive the **{role.name}** role.")
+    await ctx.send(f"✅ Verified users will RECEIVE the **{role.name}** role.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setderole(ctx, role: discord.Role):
+    config_cache['derole_id'] = role.id
+    await save_config_cache()
+    await ctx.send(f"✅ Verified users will LOSE the **{role.name}** role.")
 
 # --- 4. EVENTS ---
 
@@ -189,7 +204,7 @@ async def on_raw_reaction_add(payload):
         guild = bot.get_guild(payload.guild_id)
         if not guild: return
         
-        # 1. Remove the reaction immediately (so others have to read/click)
+        # 1. Remove the reaction immediately
         channel = bot.get_channel(payload.channel_id)
         try:
             message = await channel.fetch_message(payload.message_id)
@@ -271,27 +286,45 @@ async def on_message(message):
                 await message.channel.send(f"❌ Failed to ban user: {e}")
 
         else:
-            # GIVE ROLE
+            # GIVE ROLE & REMOVE ROLE
             role_id = config_cache['verified_role_id']
+            derole_id = config_cache['derole_id']
+            
+            role_given = False
+            role_removed = False
+            
             if role_id:
                 role = message.guild.get_role(role_id)
                 if role:
                     try:
                         await message.author.add_roles(role)
-                        await message.channel.send(f"✅ **Verified!** You have been given the {role.name} role.")
-                        # Close Ticket
-                        await asyncio.sleep(5)
-                        await message.channel.delete()
+                        role_given = True
+                    except: pass
+            
+            if derole_id:
+                derole = message.guild.get_role(derole_id)
+                if derole:
+                    try:
+                        await message.author.remove_roles(derole)
+                        role_removed = True
+                    except: pass
+            
+            if role_given:
+                success_msg = f"✅ **Verified!** You have been given the {role.name} role."
+                if role_removed:
+                    success_msg += f" (Removed {derole.name})"
+                
+                await message.channel.send(success_msg)
+                
+                # Close Ticket
+                await asyncio.sleep(5)
+                await message.channel.delete()
 
-                        if message.channel.id in config_cache['active_tickets']:
-                            config_cache['active_tickets'].remove(message.channel.id)
-                            await save_config_cache()
-                    except Exception as e:
-                        await message.channel.send(f"❌ Failed to assign role: {e}")
-                else:
-                    await message.channel.send("❌ Error: Configured Role ID not found in server.")
+                if message.channel.id in config_cache['active_tickets']:
+                    config_cache['active_tickets'].remove(message.channel.id)
+                    await save_config_cache()
             else:
-                await message.channel.send("❌ Error: No role configured. Contact Admin.")
+                 await message.channel.send("❌ Error: No Verified Role configured. Contact Admin.")
 
     await bot.process_commands(message)
 
