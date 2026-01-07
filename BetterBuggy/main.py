@@ -1,23 +1,23 @@
-import sys
-sys.path.append('..')
-try:
-    from secret_bot import TOKEN
-except ImportError:
-    print("Error: secret_bot.py not found. Please create it with TOKEN = '...'")
-    sys.exit()
-
 import discord
 from discord.ext import commands
 import json
 import os
 import re
 import asyncio
+import sys
+
+# Try to import the token from secret_bot.py in the same folder
+try:
+    from secret_bot import TOKEN
+except ImportError:
+    print("Error: secret_bot.py not found. Please make sure it is in the same folder as main.py and contains TOKEN = '...'")
+    sys.exit()
 
 # --- FUNCTION LIST ---
 # 1. LocalCollection Class: Handles database.json interactions.
 # 2. Config & DB Setup: Loads settings and active tasks.
 # 3. TaskView Class: The UI for the progress bar (Buttons & Logic).
-# 4. Helper: render_progress_bar(state): Creates the string of emojis.
+# 4. Helper: get_ansi_bar(state): Creates the colored progress bar.
 # 5. Helper: get_celebratory_message(percent): Picks the right message.
 # 6. Event: on_ready(): Startup sequence & View persistence.
 # 7. Event: on_message(message): Handles Sleep commands & Task creation.
@@ -120,7 +120,7 @@ async def load_config():
         await config_col.update_one({"_id": "settings"}, {"$set": config_cache}, upsert=True)
 
 # --- 3. TASK VIEW CLASS ---
-# State Codes: 0 = White (Todo), 1 = Green (Done), 2 = Orange (Can't/Won't)
+# State Codes: 0 = White (Todo), 1 = Green (Done), 2 = Orange (Skipped)
 
 class TaskView(discord.ui.View):
     def __init__(self, user_id, total, state=None, message_id=None):
@@ -131,21 +131,69 @@ class TaskView(discord.ui.View):
         self.message_id = message_id
         self.history = [] # Stack for Undo
 
-    def get_progress_bar(self):
-        # ⬜ 🟩 🟧
-        bar = ""
-        for s in self.state:
-            if s == 0: bar += "⬜"
-            elif s == 1: bar += "🟩"
-            elif s == 2: bar += "🟧"
+    def get_ansi_bar(self):
+        if self.total == 0: return ""
+        
+        # Calculate raw counts
+        done_count = self.state.count(1)
+        skip_count = self.state.count(2)
+        todo_count = self.state.count(0)
+        
+        # Scale to 100 character width
+        total_width = 100
+        
+        # Calculate proportional width
+        done_width = int((done_count / self.total) * total_width)
+        skip_width = int((skip_count / self.total) * total_width)
+        
+        # Calculate remaining width for todo, adjusting for rounding errors
+        # If no todos left, fill the bar completely
+        if todo_count == 0:
+            remaining_space = total_width - done_width - skip_width
+            # Distribute remaining pixel/char space to the largest segment or just add to Done
+            if done_count >= skip_count:
+                done_width += remaining_space
+            else:
+                skip_width += remaining_space
+            todo_width = 0
+        else:
+            todo_width = total_width - done_width - skip_width
+            
+        # Construct ANSI Bar
+        # Green: [2;32m, Yellow: [2;33m, Gray (Todo): [2;30m (Dark Gray) or use default
+        bar = "```ansi\n"
+        if done_width > 0:
+            bar += f"[2;32m{'|' * done_width}[0m"
+        if skip_width > 0:
+            bar += f"[2;33m{'|' * skip_width}[0m"
+        if todo_width > 0:
+            bar += f"[2;30m{'|' * todo_width}[0m"
+        bar += "\n```"
+        
         return bar
 
-    def get_next_index(self):
-        # Find the first '0' (White)
-        try:
-            return self.state.index(0)
-        except ValueError:
-            return -1 # Full
+    async def update_message(self, interaction, finished=False, congratulation=None):
+        # Line 1: User Mention
+        # Line 2: ANSI Bar
+        # Line 3: Buttons OR Congratulation Message
+        
+        content = f"<@{self.user_id}>'s tasks\n{self.get_ansi_bar()}"
+        
+        if finished and congratulation:
+            # Replace buttons with text on the "3rd line"
+            content += f"\n🎉 **{congratulation}**"
+            view = None
+        else:
+            view = self
+
+        if interaction:
+            await interaction.response.edit_message(content=content, view=view)
+        
+        # DB Update
+        if finished:
+            await tasks_col.delete_one({"message_id": self.message_id})
+        else:
+            await self.update_db()
 
     async def update_db(self):
         if self.message_id:
@@ -153,6 +201,63 @@ class TaskView(discord.ui.View):
                 {"message_id": self.message_id}, 
                 {"$set": {"state": self.state}}
             )
+
+    def get_next_index(self):
+        try:
+            return self.state.index(0)
+        except ValueError:
+            return -1
+
+    async def check_completion(self, interaction):
+        # Auto-complete if no '0's are left
+        if 0 not in self.state:
+            await self.finish_logic(interaction)
+        else:
+            await self.update_message(interaction)
+
+    async def finish_logic(self, interaction):
+        # Calculate stats
+        greens = [x for x in self.state if x == 1]
+        total_green = len(greens)
+        percent_complete = int((total_green / self.total) * 100)
+        
+        # Get Message
+        msg_key = "1"
+        if 25 <= percent_complete < 50: msg_key = "2"
+        elif 50 <= percent_complete < 75: msg_key = "3"
+        elif 75 <= percent_complete: msg_key = "4"
+        
+        celebration = config_cache["celebratory_messages"].get(msg_key, "Good job!")
+        
+        await self.update_message(interaction, finished=True, congratulation=celebration)
+
+    @discord.ui.button(label="Finish One", style=discord.ButtonStyle.success, custom_id="bb_done")
+    async def done_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
+        
+        idx = self.get_next_index()
+        if idx == -1:
+            return await self.finish_logic(interaction)
+
+        self.history.append((idx, 0))
+        self.state[idx] = 1 # Green
+        
+        await self.check_completion(interaction)
+
+    @discord.ui.button(label="Skip One", style=discord.ButtonStyle.danger, custom_id="bb_skip")
+    async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
+
+        idx = self.get_next_index()
+        if idx == -1:
+            return await self.finish_logic(interaction)
+
+        self.history.append((idx, 0))
+        self.state[idx] = 2 # Orange/Yellow
+        
+        await self.check_completion(interaction)
 
     @discord.ui.button(label="Undo", style=discord.ButtonStyle.secondary, custom_id="bb_undo")
     async def undo_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -164,84 +269,15 @@ class TaskView(discord.ui.View):
 
         last_idx, last_val = self.history.pop()
         self.state[last_idx] = last_val
-        await self.update_db()
-        await interaction.response.edit_message(content=f"**Tasks for {interaction.user.display_name}:**\n{self.get_progress_bar()}")
-
-    @discord.ui.button(label="Done", style=discord.ButtonStyle.success, custom_id="bb_done")
-    async def done_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
         
-        idx = self.get_next_index()
-        if idx == -1:
-            return await interaction.response.send_message("List is full! Click 'Finished with list' to sort.", ephemeral=True)
+        await self.update_message(interaction)
 
-        self.history.append((idx, 0)) # Save previous state (0)
-        self.state[idx] = 1 # Mark Green
-        await self.update_db()
-        await interaction.response.edit_message(content=f"**Tasks for {interaction.user.display_name}:**\n{self.get_progress_bar()}")
-
-    @discord.ui.button(label="Can't/Won't Do", style=discord.ButtonStyle.danger, custom_id="bb_skip") # Danger is Red, but closest to Orange available in buttons
-    async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
-
-        idx = self.get_next_index()
-        if idx == -1:
-            return await interaction.response.send_message("List is full! Click 'Finished with list' to sort.", ephemeral=True)
-
-        self.history.append((idx, 0))
-        self.state[idx] = 2 # Mark Orange
-        await self.update_db()
-        await interaction.response.edit_message(content=f"**Tasks for {interaction.user.display_name}:**\n{self.get_progress_bar()}")
-
-    @discord.ui.button(label="Finished with list", style=discord.ButtonStyle.primary, custom_id="bb_finish")
+    @discord.ui.button(label="Done with List", style=discord.ButtonStyle.primary, custom_id="bb_finish")
     async def finish_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
 
-        # 1. Sort: Green (1), Orange (2), White (0)
-        # We want order: 1s, then 2s, then 0s
-        greens = [x for x in self.state if x == 1]
-        oranges = [x for x in self.state if x == 2]
-        whites = [x for x in self.state if x == 0]
-        
-        sorted_state = greens + oranges + whites
-        self.state = sorted_state
-        
-        # 2. Calculations
-        total_green = len(greens)
-        total_orange = len(oranges)
-        percent_complete = int((total_green / self.total) * 100)
-        percent_orange = int((total_orange / self.total) * 100)
-        
-        # 3. Message
-        msg_key = "1"
-        if 25 <= percent_complete < 50: msg_key = "2"
-        elif 50 <= percent_complete < 75: msg_key = "3"
-        elif 75 <= percent_complete: msg_key = "4"
-        
-        celebration = config_cache["celebratory_messages"].get(msg_key, "Good job!")
-
-        final_bar = ""
-        for s in self.state:
-            if s == 1: final_bar += "🟩"
-            elif s == 2: final_bar += "🟧"
-            elif s == 0: final_bar += "⬜"
-
-        final_text = (
-            f"**Start:** {self.get_progress_bar()}\n" # Shows state right before click? Or sorted? 
-            f"**End:** {final_bar}\n\n"
-            f"✅ **Completed:** {percent_complete}%\n"
-            f"🟧 **Skipped:** {percent_orange}%\n\n"
-            f"🎉 **{celebration}**"
-        )
-        
-        # 4. Cleanup
-        await tasks_col.delete_one({"message_id": self.message_id})
-        
-        # Edit message and remove buttons
-        await interaction.response.edit_message(content=final_text, view=None)
+        await self.finish_logic(interaction)
 
 
 # --- 4 & 5. EVENTS ---
@@ -310,8 +346,8 @@ async def on_message(message):
         
         if text.isdigit():
             num = int(text)
-            if num > 20: # Cap it reasonably
-                await message.channel.send(f"{message.author.mention} That's too many tasks! Try 20 or less, buggy.")
+            if num > 100: # Limit increased to 100
+                await message.channel.send(f"{message.author.mention} That's too many tasks! Try 100 or less, buggy.")
                 return
             if num < 1:
                 return
@@ -328,8 +364,10 @@ async def on_message(message):
 
             # Create View
             view = TaskView(user_id=message.author.id, total=num)
+            
+            # Initial Message
             msg = await message.channel.send(
-                f"**Tasks for {message.author.display_name}:**\n{view.get_progress_bar()}",
+                f"<@{message.author.id}>'s tasks\n{view.get_ansi_bar()}",
                 view=view
             )
             
