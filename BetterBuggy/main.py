@@ -171,8 +171,9 @@ class TaskView(discord.ui.View):
         # Row 1: Odd indices (1, 3, 5...)
         # This creates a vertical-first fill (Top-Left, Bottom-Left, Top-Next...)
         
-        row0 = "-#"
-        row1 = "-#"
+        # Added space after -# for correct Discord subscript formatting
+        row0 = "-# "
+        row1 = "-# "
         
         for i in range(total_visual_blocks):
             val = visual_state[i]
@@ -247,7 +248,10 @@ class TaskView(discord.ui.View):
         
         await self.update_message(interaction, finished=True, congratulation=celebration)
 
-    @discord.ui.button(label="Finish One", style=discord.ButtonStyle.success, custom_id="bb_done")
+    # --- BUTTONS ---
+    # Removed labels and added emojis to make buttons smaller
+    
+    @discord.ui.button(style=discord.ButtonStyle.success, custom_id="bb_done", emoji="✅")
     async def done_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
@@ -260,7 +264,7 @@ class TaskView(discord.ui.View):
         self.state[idx] = 1 # Green (Done)
         await self.check_completion(interaction)
 
-    @discord.ui.button(label="Skip One", style=discord.ButtonStyle.danger, custom_id="bb_skip")
+    @discord.ui.button(style=discord.ButtonStyle.danger, custom_id="bb_skip", emoji="⏭️")
     async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
@@ -273,7 +277,7 @@ class TaskView(discord.ui.View):
         self.state[idx] = 2 # Orange (Skipped)
         await self.check_completion(interaction)
 
-    @discord.ui.button(label="Undo", style=discord.ButtonStyle.secondary, custom_id="bb_undo")
+    @discord.ui.button(style=discord.ButtonStyle.secondary, custom_id="bb_undo", emoji="↩️")
     async def undo_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
@@ -285,7 +289,7 @@ class TaskView(discord.ui.View):
         self.state[last_idx] = last_val
         await self.update_message(interaction)
 
-    @discord.ui.button(label="Done with List", style=discord.ButtonStyle.primary, custom_id="bb_finish")
+    @discord.ui.button(style=discord.ButtonStyle.primary, custom_id="bb_finish", emoji="🏁")
     async def finish_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
@@ -358,29 +362,6 @@ async def on_message(message):
             if existing:
                 # Check if the message still exists
                 try:
-                    # We need the channel ID to fetch the message, but we didn't store it.
-                    # We can try to fetch it if we assume it's in the same channel, OR iterate channels (slow).
-                    # BETTER: Since we don't store channel_id, we can't efficiently check persistence 
-                    # unless we assume the user is trying to make a list in the same channel they made the last one,
-                    # OR we just blindly allow overwrite if they say "force" (but prompt didn't say that).
-                    
-                    # Fix: Let's assume for now we trust the user or they deleted it.
-                    # But the prompt says "checks to make sure the list is deleted".
-                    # Without storing channel_id, we can't check message existence easily.
-                    # Let's check if we can fetch the message if we happen to know the channel.
-                    # Since we don't, we will assume if the interaction fails it's deleted.
-                    # But wait, we are in on_message, no interaction yet.
-                    
-                    # Workaround: We'll allow them to make a new one if they confirm, OR better, 
-                    # let's just delete the old record if they try to make a new one, assuming they know what they are doing?
-                    # No, prompt says "checks... before telling them to finish it".
-                    
-                    # Real Fix: We can't check if the message is deleted without channel ID.
-                    # I will add channel_id to the document when saving!
-                    
-                    # BUT for existing records without channel_id, we might have issues.
-                    # Let's try to proceed with logic assuming we have it (or add it now).
-                    
                     channel_id = existing.get('channel_id')
                     msg_id = existing.get('message_id')
                     
