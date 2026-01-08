@@ -164,7 +164,7 @@ async def on_raw_reaction_add(payload):
 
 @bot.event
 async def on_voice_state_update(member, before, after):
-    """Handles time tracking for jailed users."""
+    """Handles time tracking for users in timeout."""
     user_id = str(member.id)
     if user_id not in JAIL_CONFIG["active_timeouts"]:
         return
@@ -205,9 +205,9 @@ async def on_voice_state_update(member, before, after):
                             
                             log_channel = bot.get_channel(1434622477660717056)
                             if log_channel:
-                                await log_channel.send(f"🔓 {member.mention} has served their sentence in jail and regained NSFW access!")
+                                await log_channel.send(f"🔓 {member.mention} has completed their timeout and regained NSFW access!")
                         except Exception as e:
-                            print(f"Failed to restore role to jailed user: {e}")
+                            print(f"Failed to restore role to user in timeout: {e}")
 
 # --- 6. BACKGROUND TASK ---
 
@@ -239,7 +239,7 @@ async def check_lockout_times():
                                         del JAIL_CONFIG["active_timeouts"][uid]
                                         log_channel = bot.get_channel(1434622477660717056)
                                         if log_channel:
-                                            await log_channel.send(f"🔓 {member.mention} has served their sentence in jail and regained NSFW access!")
+                                            await log_channel.send(f"🔓 {member.mention} has completed their timeout and regained NSFW access!")
                                     except: pass
                     else:
                         data["last_check"] = now
@@ -365,7 +365,7 @@ async def timeout(ctx, member: discord.Member, minutes: int):
         return await ctx.send("❌ Could not find the configured NSFW role.")
 
     if not JAIL_CONFIG["voice_channel_id"]:
-        return await ctx.send(f"❌ Jail voice channel not set. Use `{PREFIX}setjail <id>` first.")
+        return await ctx.send(f"❌ Timeout voice channel not set. Use `{PREFIX}setjail <id>` first.")
 
     try:
         # Remove role
@@ -386,7 +386,7 @@ async def timeout(ctx, member: discord.Member, minutes: int):
         db._save_to_file()
 
         jail_channel = bot.get_channel(JAIL_CONFIG["voice_channel_id"])
-        await ctx.send(f"⚖️ {member.mention} has been jailed for **{minutes} minutes**. They must stay in {jail_channel.mention} to regain NSFW access.")
+        await ctx.send(f"𐂺 {member.mention} has been put in timeout for **{minutes} minutes**. They must stay in {jail_channel.mention} to regain NSFW access.")
         
     except Exception as e:
         await ctx.send(f"❌ Failed to jail user: {e}")
