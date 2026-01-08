@@ -289,7 +289,7 @@ class TaskView(discord.ui.View):
         self.state[last_idx] = last_val
         await self.update_message(interaction)
 
-    @discord.ui.button(label="Resolve", style=discord.ButtonStyle.blurple, custom_id="bb_finish") # Blurple is Purple-ish
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.blurple, custom_id="bb_finish") # Blurple is Purple-ish
     async def finish_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
@@ -379,7 +379,7 @@ async def on_message(message):
                             
                     if message_exists:
                         await message.channel.send(
-                            f"{message.author.mention} You already have an active list! Please resolve it first.",
+                            f"{message.author.mention} You already have an active list! Please close it first.",
                             delete_after=5
                         )
                         return
