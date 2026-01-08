@@ -163,7 +163,7 @@ class TaskView(discord.ui.View):
 
         # Symbols - Using standard large square emojis to ensure consistent size and spacing
         SYM_DONE = "🟩" # Green Square
-        SYM_SKIP = "🟧" # Orange Large Square
+        SYM_SKIP = "🟦" # Orange Large Square
         SYM_TODO = "⬜" # White Large Square
 
         # Construct the 2 rows string
