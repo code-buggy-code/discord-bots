@@ -17,7 +17,7 @@ except ImportError:
 # 1. LocalCollection Class: Handles database.json interactions.
 # 2. Config & DB Setup: Loads settings and active tasks.
 # 3. TaskView Class: The UI for the progress bar (Buttons & Logic).
-# 4. Helper: get_emoji_bar(state): Creates the 50x2 grid using done/skip/empty symbols.
+# 4. Helper: get_emoji_bar(state): Creates the 30x2 grid using done/skip/empty symbols.
 # 5. Helper: get_celebratory_message(percent): Picks the right message.
 # 6. Event: on_ready(): Startup sequence & View persistence.
 # 7. Event: on_message(message): Handles Sleep commands & Task creation.
@@ -134,12 +134,12 @@ class TaskView(discord.ui.View):
     def get_emoji_bar(self):
         if self.total == 0: return ""
         
-        # Grid Size: 50 Columns x 2 Rows = 100 Squares total
-        cols = 50
+        # Grid Size: 30 Columns x 2 Rows = 60 Squares total
+        cols = 30
         rows = 2
         total_visual_blocks = cols * rows
         
-        # We need to map 'self.total' tasks onto '100' visual squares.
+        # We need to map 'self.total' tasks onto '60' visual squares.
         # We will create an expanded list representing the visual state.
         
         visual_state = []
@@ -155,7 +155,7 @@ class TaskView(discord.ui.View):
             visual_state.extend([self.state[i]] * blocks_for_this_task)
             current_visual_count += blocks_for_this_task
             
-        # Safety check to ensure exactly 100 blocks
+        # Safety check to ensure exactly 60 blocks
         if len(visual_state) < total_visual_blocks:
             visual_state.extend([0] * (total_visual_blocks - len(visual_state)))
         elif len(visual_state) > total_visual_blocks:
@@ -189,7 +189,7 @@ class TaskView(discord.ui.View):
 
     async def update_message(self, interaction, finished=False, congratulation=None):
         # Line 1: User Mention with Count
-        # Line 2: Geometric Bar (50x2)
+        # Line 2: Geometric Bar (30x2)
         # Line 3: Buttons OR Congratulation Message
         
         completed_tasks = self.state.count(1) + self.state.count(2)
