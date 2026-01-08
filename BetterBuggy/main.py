@@ -356,11 +356,60 @@ async def on_message(message):
 
             existing = await tasks_col.find_one({"user_id": message.author.id})
             if existing:
-                await message.channel.send(
-                    f"{message.author.mention} You already have an active list! Please finish it or delete it first.",
-                    delete_after=5
-                )
-                return
+                # Check if the message still exists
+                try:
+                    # We need the channel ID to fetch the message, but we didn't store it.
+                    # We can try to fetch it if we assume it's in the same channel, OR iterate channels (slow).
+                    # BETTER: Since we don't store channel_id, we can't efficiently check persistence 
+                    # unless we assume the user is trying to make a list in the same channel they made the last one,
+                    # OR we just blindly allow overwrite if they say "force" (but prompt didn't say that).
+                    
+                    # Fix: Let's assume for now we trust the user or they deleted it.
+                    # But the prompt says "checks to make sure the list is deleted".
+                    # Without storing channel_id, we can't check message existence easily.
+                    # Let's check if we can fetch the message if we happen to know the channel.
+                    # Since we don't, we will assume if the interaction fails it's deleted.
+                    # But wait, we are in on_message, no interaction yet.
+                    
+                    # Workaround: We'll allow them to make a new one if they confirm, OR better, 
+                    # let's just delete the old record if they try to make a new one, assuming they know what they are doing?
+                    # No, prompt says "checks... before telling them to finish it".
+                    
+                    # Real Fix: We can't check if the message is deleted without channel ID.
+                    # I will add channel_id to the document when saving!
+                    
+                    # BUT for existing records without channel_id, we might have issues.
+                    # Let's try to proceed with logic assuming we have it (or add it now).
+                    
+                    channel_id = existing.get('channel_id')
+                    msg_id = existing.get('message_id')
+                    
+                    message_exists = False
+                    if channel_id:
+                        try:
+                            channel = bot.get_channel(channel_id)
+                            if channel:
+                                await channel.fetch_message(msg_id)
+                                message_exists = True
+                        except discord.NotFound:
+                            pass # Message deleted
+                        except discord.Forbidden:
+                            pass # Can't see channel anymore
+                            
+                    if message_exists:
+                        await message.channel.send(
+                            f"{message.author.mention} You already have an active list! Please finish it or delete it first.",
+                            delete_after=5
+                        )
+                        return
+                    else:
+                        # Message doesn't exist (deleted), so remove DB entry and allow new one
+                        await tasks_col.delete_one({"user_id": message.author.id})
+                        
+                except Exception as e:
+                    print(f"Error checking existing task: {e}")
+                    # Fallback: just delete it to prevent locking user out forever
+                    await tasks_col.delete_one({"user_id": message.author.id})
 
             view = TaskView(user_id=message.author.id, total=num)
             msg = await message.channel.send(
@@ -373,6 +422,7 @@ async def on_message(message):
             await tasks_col.insert_one({
                 "user_id": message.author.id,
                 "message_id": msg.id,
+                "channel_id": message.channel.id, # Storing channel ID now!
                 "total": num,
                 "state": view.state
             })
