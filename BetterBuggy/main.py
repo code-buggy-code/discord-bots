@@ -120,7 +120,7 @@ async def load_config():
         await config_col.update_one({"_id": "settings"}, {"$set": config_cache}, upsert=True)
 
 # --- 3. TASK VIEW CLASS ---
-# State Codes: 0 = White (Todo), 1 = Green (Done), 2 = Orange (Skipped)
+# State Codes: 0 = White (Todo), 1 = Green (Done), 2 = Blue (Skipped)
 
 class TaskView(discord.ui.View):
     def __init__(self, user_id, total, state=None, message_id=None):
@@ -163,7 +163,7 @@ class TaskView(discord.ui.View):
 
         # Symbols - Using standard large square emojis to ensure consistent size and spacing
         SYM_DONE = "🟩" # Green Square
-        SYM_SKIP = "🟦" # Orange Large Square
+        SYM_SKIP = "🟦" # Blue Square (Updated from Orange)
         SYM_TODO = "⬜" # White Large Square
 
         # Construct the 2 rows string
@@ -249,9 +249,9 @@ class TaskView(discord.ui.View):
         await self.update_message(interaction, finished=True, congratulation=celebration)
 
     # --- BUTTONS ---
-    # Removed labels and added emojis to make buttons smaller
+    # Labels added back, emojis removed
     
-    @discord.ui.button(style=discord.ButtonStyle.success, custom_id="bb_done", emoji="✅")
+    @discord.ui.button(label="Done", style=discord.ButtonStyle.success, custom_id="bb_done")
     async def done_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
@@ -264,7 +264,7 @@ class TaskView(discord.ui.View):
         self.state[idx] = 1 # Green (Done)
         await self.check_completion(interaction)
 
-    @discord.ui.button(style=discord.ButtonStyle.danger, custom_id="bb_skip", emoji="⏭️")
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.primary, custom_id="bb_skip") # Primary is Blue
     async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
@@ -274,10 +274,10 @@ class TaskView(discord.ui.View):
             return await self.finish_logic(interaction)
 
         self.history.append((idx, 0))
-        self.state[idx] = 2 # Orange (Skipped)
+        self.state[idx] = 2 # Blue (Skipped)
         await self.check_completion(interaction)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, custom_id="bb_undo", emoji="↩️")
+    @discord.ui.button(label="Undo", style=discord.ButtonStyle.secondary, custom_id="bb_undo") # Secondary is Grey
     async def undo_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
@@ -289,7 +289,7 @@ class TaskView(discord.ui.View):
         self.state[last_idx] = last_val
         await self.update_message(interaction)
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, custom_id="bb_finish", emoji="🏁")
+    @discord.ui.button(label="Resolve", style=discord.ButtonStyle.blurple, custom_id="bb_finish") # Blurple is Purple-ish
     async def finish_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
