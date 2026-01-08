@@ -17,7 +17,7 @@ except ImportError:
 # 1. LocalCollection Class: Handles database.json interactions.
 # 2. Config & DB Setup: Loads settings and active tasks.
 # 3. TaskView Class: The UI for the progress bar (Buttons & Logic).
-# 4. Helper: get_ansi_bar(state): Creates the colored progress bar.
+# 4. Helper: get_ansi_bar(state): Creates the colored progress bar (2x50 Grid).
 # 5. Helper: get_celebratory_message(percent): Picks the right message.
 # 6. Event: on_ready(): Startup sequence & View persistence.
 # 7. Event: on_message(message): Handles Sleep commands & Task creation.
@@ -134,54 +134,68 @@ class TaskView(discord.ui.View):
     def get_ansi_bar(self):
         if self.total == 0: return ""
         
-        # Calculate raw counts
-        done_count = self.state.count(1)
-        skip_count = self.state.count(2)
-        todo_count = self.state.count(0)
+        # 1. Scale actual tasks to 100 visual blocks
+        visual_blocks = []
+        accumulated_width = 0
         
-        # Scale to 100 character width
-        total_width = 100
-        
-        # Calculate proportional width
-        done_width = int((done_count / self.total) * total_width)
-        skip_width = int((skip_count / self.total) * total_width)
-        
-        # Calculate remaining width for todo, adjusting for rounding errors
-        # If no todos left, fill the bar completely
-        if todo_count == 0:
-            remaining_space = total_width - done_width - skip_width
-            # Distribute remaining pixel/char space to the largest segment or just add to Done
-            if done_count >= skip_count:
-                done_width += remaining_space
-            else:
-                skip_width += remaining_space
-            todo_width = 0
-        else:
-            todo_width = total_width - done_width - skip_width
+        for i in range(self.total):
+            # Calculate how many blocks this specific task should occupy
+            # using floating point logic relative to 100
+            target_width = (i + 1) * 100 // self.total
+            width = target_width - accumulated_width
             
-        # Construct ANSI Bar
-        # Green: [2;32m, Yellow: [2;33m, Gray (Todo): [2;30m (Dark Gray) or use default
-        bar = "```ansi\n"
-        if done_width > 0:
-            bar += f"[2;32m{'|' * done_width}[0m"
-        if skip_width > 0:
-            bar += f"[2;33m{'|' * skip_width}[0m"
-        if todo_width > 0:
-            bar += f"[2;30m{'|' * todo_width}[0m"
-        bar += "\n```"
+            visual_blocks.extend([self.state[i]] * width)
+            accumulated_width += width
+            
+        # Ensure we have exactly 100 blocks (should be exact due to logic above, but safety first)
+        if len(visual_blocks) < 100:
+            visual_blocks.extend([0] * (100 - len(visual_blocks)))
+        elif len(visual_blocks) > 100:
+            visual_blocks = visual_blocks[:100]
+
+        # 2. Build the Grid (2 rows, 50 columns)
+        # Filling order: Vertical (Top-Left -> Bottom-Left -> Top-Col2...)
+        # Index 0 -> Row 0, Col 0
+        # Index 1 -> Row 1, Col 0
+        # Index 2 -> Row 0, Col 1
+        # Index 3 -> Row 1, Col 1
         
-        return bar
+        row0_str = ""
+        row1_str = ""
+        
+        # ANSI Colors for Big Blocks
+        C_RESET = "\u001b[0m"
+        C_GREEN = "\u001b[1;32m"  # Bright Green
+        C_ORANGE = "\u001b[1;33m" # Bright Yellow/Gold (closest to Orange)
+        C_WHITE = "\u001b[0;37m"  # Standard White/Gray
+        
+        SYMBOL = "█"
+        
+        for i in range(100):
+            val = visual_blocks[i]
+            if val == 1: color = C_GREEN
+            elif val == 2: color = C_ORANGE
+            else: color = C_WHITE
+            
+            block_char = f"{color}{SYMBOL}{C_RESET}"
+            
+            # Even indices go to Row 0, Odd indices go to Row 1
+            if i % 2 == 0:
+                row0_str += block_char
+            else:
+                row1_str += block_char
+                
+        return f"```ansi\n{row0_str}\n{row1_str}\n```"
 
     async def update_message(self, interaction, finished=False, congratulation=None):
         # Line 1: User Mention with Count
-        # Line 2: ANSI Bar
+        # Line 2: ANSI Grid
         # Line 3: Buttons OR Congratulation Message
         
         completed_tasks = self.state.count(1) + self.state.count(2)
         content = f"<@{self.user_id}>'s tasks: {completed_tasks}/{self.total}\n{self.get_ansi_bar()}"
         
         if finished and congratulation:
-            # Replace buttons with text on the "3rd line"
             content += f"\n🎉 **{congratulation}**"
             view = None
         else:
@@ -210,19 +224,15 @@ class TaskView(discord.ui.View):
             return -1
 
     async def check_completion(self, interaction):
-        # Auto-complete if no '0's are left
         if 0 not in self.state:
             await self.finish_logic(interaction)
         else:
             await self.update_message(interaction)
 
     async def finish_logic(self, interaction):
-        # Calculate stats
         greens = [x for x in self.state if x == 1]
-        total_green = len(greens)
-        percent_complete = int((total_green / self.total) * 100)
+        percent_complete = int((len(greens) / self.total) * 100)
         
-        # Get Message
         msg_key = "1"
         if 25 <= percent_complete < 50: msg_key = "2"
         elif 50 <= percent_complete < 75: msg_key = "3"
@@ -243,7 +253,6 @@ class TaskView(discord.ui.View):
 
         self.history.append((idx, 0))
         self.state[idx] = 1 # Green
-        
         await self.check_completion(interaction)
 
     @discord.ui.button(label="Skip One", style=discord.ButtonStyle.danger, custom_id="bb_skip")
@@ -257,7 +266,6 @@ class TaskView(discord.ui.View):
 
         self.history.append((idx, 0))
         self.state[idx] = 2 # Orange/Yellow
-        
         await self.check_completion(interaction)
 
     @discord.ui.button(label="Undo", style=discord.ButtonStyle.secondary, custom_id="bb_undo")
@@ -270,7 +278,6 @@ class TaskView(discord.ui.View):
 
         last_idx, last_val = self.history.pop()
         self.state[last_idx] = last_val
-        
         await self.update_message(interaction)
 
     @discord.ui.button(label="Done with List", style=discord.ButtonStyle.primary, custom_id="bb_finish")
@@ -311,50 +318,37 @@ async def on_message(message):
     if message.author.bot: return
 
     # --- 1. SLEEP COMMANDS ---
-    # Check if bot is mentioned
     if bot.user in message.mentions:
         content = message.content.lower()
         
-        # A. Self Commands ("I'm going to sleep")
-        # Regex: match "im/i'm" + "going to sleep/falling asleep"
+        # A. Self Commands
         if re.search(r"\bi'?m\s+(going\s+to\s+sleep|falling\s+asleep)", content):
             await handle_sleep_command(message, message.author)
             return
             
-        # B. Target Commands ("@User is asleep")
-        # Regex: match mentions + "is asleep/is sleeping/fell asleep"
-        # We look for the other user mentioned
+        # B. Target Commands
         targets = [m for m in message.mentions if m != bot.user]
         if targets and re.search(r"(is\s+asleep|is\s+sleeping|fell\s+asleep)", content):
             target = targets[0]
-            
-            # Check Proximity
             if not message.author.voice or not target.voice or \
                message.author.voice.channel.id != target.voice.channel.id:
-                # Bypass proximity if Admin? No, prompt specified strict rule.
-                # "ensure that people that aren't in the vc with the user... cannot move users"
-                # We interpret "in the vc with the user" as strictly same channel.
                 return 
             
             await handle_sleep_command(message, target)
             return
 
     # --- 2. TASK COMMANDS ---
-    # Trigger: @BetterBuggy [number]
     if bot.user in message.mentions:
-        # Strip mention
         text = message.content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
         
         if text.isdigit():
             num = int(text)
-            if num > 100: # Limit increased to 100
+            if num > 100:
                 await message.channel.send(f"{message.author.mention} That's too many tasks! Try 100 or less, buggy.")
                 return
             if num < 1:
                 return
 
-            # Check if user already has a task list?
-            # Prompt: "prompt them to close the previous one"
             existing = await tasks_col.find_one({"user_id": message.author.id})
             if existing:
                 await message.channel.send(
@@ -363,10 +357,7 @@ async def on_message(message):
                 )
                 return
 
-            # Create View
             view = TaskView(user_id=message.author.id, total=num)
-            
-            # Initial Message
             msg = await message.channel.send(
                 f"<@{message.author.id}>'s tasks: 0/{num}\n{view.get_ansi_bar()}",
                 view=view
@@ -374,7 +365,6 @@ async def on_message(message):
             
             view.message_id = msg.id
             
-            # Save to DB
             await tasks_col.insert_one({
                 "user_id": message.author.id,
                 "message_id": msg.id,
@@ -391,7 +381,6 @@ async def handle_sleep_command(message, target_member):
         return
 
     if not target_member.voice:
-        # Can't move someone not in voice
         return
 
     sleep_channel = bot.get_channel(config_cache['sleep_vc_id'])
