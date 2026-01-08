@@ -289,7 +289,7 @@ class TaskView(discord.ui.View):
         self.state[last_idx] = last_val
         await self.update_message(interaction)
 
-    @discord.ui.button(label="Close", style=discord.ButtonStyle.blurple, custom_id="bb_finish") # Blurple is Purple-ish
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="bb_finish") # Secondary is Grey
     async def finish_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
