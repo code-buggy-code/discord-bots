@@ -17,7 +17,7 @@ except ImportError:
 # 1. LocalCollection Class: Handles database.json interactions.
 # 2. Config & DB Setup: Loads settings and active tasks.
 # 3. TaskView Class: The UI for the progress bar (Buttons & Logic).
-# 4. Helper: get_emoji_bar(state): Creates the 30x2 grid using done/skip/empty symbols.
+# 4. Helper: get_emoji_bar(state): Creates the 30x2 grid using consistent square emojis.
 # 5. Helper: get_celebratory_message(percent): Picks the right message.
 # 6. Event: on_ready(): Startup sequence & View persistence.
 # 7. Event: on_message(message): Handles Sleep commands & Task creation.
@@ -161,10 +161,10 @@ class TaskView(discord.ui.View):
         elif len(visual_state) > total_visual_blocks:
             visual_state = visual_state[:total_visual_blocks]
 
-        # Symbols
-        SYM_DONE = "◼" # Changed to a more "filled" square
-        SYM_SKIP = "▧"
-        SYM_TODO = "□"
+        # Symbols - Using standard large square emojis to ensure consistent size and spacing
+        SYM_DONE = "⬛" # Black Large Square (Consistent with White/Orange)
+        SYM_SKIP = "🟧" # Orange Large Square
+        SYM_TODO = "⬜" # White Large Square
 
         # Construct the 2 rows string
         # Row 0: Even indices (0, 2, 4...)
