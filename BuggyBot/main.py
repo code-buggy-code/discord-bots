@@ -631,7 +631,7 @@ async def purge(ctx, target_arg: str, scope_or_num: str = None):
     elif target_arg.lower() == "nonmedia": target_mode = "nonmedia"
     else:
         try: target_user = await commands.MemberConverter().convert(ctx, target_arg)
-        except: return await ctx.send("❌ Invalid target. Use `@user`, `nonmedia`, or `all`.")
+        except: return await ctx.send("❌ Invalid target. Use `@user`, `nonmedia`, or `all`.", delete_after=5)
 
     # 2. Parse Scope / Limit
     limit = None
@@ -647,7 +647,7 @@ async def purge(ctx, target_arg: str, scope_or_num: str = None):
                 thing = await commands.GuildChannelConverter().convert(ctx, scope_or_num)
                 if isinstance(thing, discord.TextChannel): channels = [thing]
                 elif isinstance(thing, discord.CategoryChannel): channels = thing.text_channels
-            except: return await ctx.send("❌ Invalid scope or number.")
+            except: return await ctx.send("❌ Invalid scope or number.", delete_after=5)
 
     # 3. Confirmation
     display_target = target_user.mention if target_user else target_mode.upper()
@@ -663,16 +663,28 @@ async def purge(ctx, target_arg: str, scope_or_num: str = None):
     )
     
     def check(m): return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() == "yes"
-    try: await bot.wait_for("message", check=check, timeout=30)
-    except: return await ctx.send("❌ Timed out.")
+    try: 
+        resp = await bot.wait_for("message", check=check, timeout=30)
+    except: 
+        await confirm_msg.delete()
+        return await ctx.send("❌ Timed out.", delete_after=5)
 
-    # 4. Execution
-    await ctx.send(f"🧹 Purging...")
+    # 4. Execution setup
+    # Delete interactions
+    try: await confirm_msg.delete()
+    except: pass
+    try: await resp.delete()
+    except: pass
+    try: await ctx.message.delete()
+    except: pass
+
+    status_msg = await ctx.send(f"🧹 Purging...")
     total = 0
     
     def check_msg(msg):
         if msg.pinned: return False
         if msg.channel.id in sticky_data and msg.id == sticky_data[msg.channel.id][1]: return False
+        if msg.id == status_msg.id: return False
         
         # Target Logic
         if target_user:
@@ -684,11 +696,21 @@ async def purge(ctx, target_arg: str, scope_or_num: str = None):
 
     for c in channels:
         try:
-            deleted = await c.purge(limit=limit, check=check_msg)
+            # If purging current channel, look before the status message to avoid deleting it 
+            # or counting it, and to effectively "skip" the deleted command messages
+            kwargs = {"limit": limit, "check": check_msg}
+            if c.id == ctx.channel.id:
+                kwargs["before"] = status_msg
+            
+            deleted = await c.purge(**kwargs)
             total += len(deleted)
-        except: pass
+        except Exception as e: 
+            print(f"Purge error in {c.name}: {e}")
 
-    await ctx.send(f"✅ Deleted {total} messages.")
+    await status_msg.edit(content=f"✅ Deleted {total} messages.")
+    await asyncio.sleep(5)
+    try: await status_msg.delete()
+    except: pass
     await send_log(f"🗑️ **Purge:** {ctx.author.name} deleted {total} messages ({target_mode}).")
 
 @bot.command()
