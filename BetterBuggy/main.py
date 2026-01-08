@@ -17,7 +17,7 @@ except ImportError:
 # 1. LocalCollection Class: Handles database.json interactions.
 # 2. Config & DB Setup: Loads settings and active tasks.
 # 3. TaskView Class: The UI for the progress bar (Buttons & Logic).
-# 4. Helper: get_emoji_bar(state): Creates the creative symbol bar (20x2 Grid).
+# 4. Helper: get_emoji_bar(state): Creates the detailed gradient bar (20x2 Grid).
 # 5. Helper: get_celebratory_message(percent): Picks the right message.
 # 6. Event: on_ready(): Startup sequence & View persistence.
 # 7. Event: on_message(message): Handles Sleep commands & Task creation.
@@ -138,49 +138,53 @@ class TaskView(discord.ui.View):
         rows = 2
         total_blocks = cols * rows
         
-        greens = self.state.count(1)
-        oranges = self.state.count(2)
+        # We increase resolution by 4x per block to use the gradient symbols
+        # 0 = Empty, 1 = 1/4, 2 = 1/2, 3 = 3/4, 4 = Full
+        sub_units_per_block = 4
+        total_sub_units = total_blocks * sub_units_per_block
         
-        # Calculate block counts
-        g_blocks = int((greens / self.total) * total_blocks)
-        o_blocks = int((oranges / self.total) * total_blocks)
-        w_blocks = total_blocks - g_blocks - o_blocks
-        
-        # Full completion check
-        if 0 not in self.state:
-            if w_blocks > 0:
-                if greens >= oranges:
-                    g_blocks += w_blocks
-                else:
-                    o_blocks += w_blocks
-                w_blocks = 0
-                
-        # Create linear list of blocks
-        visual_list = [1] * g_blocks + [2] * o_blocks + [0] * w_blocks
-        
-        # Ensure exact length of 40 in case of rounding errors
-        if len(visual_list) < total_blocks:
-             visual_list.extend([0] * (total_blocks - len(visual_list)))
-        elif len(visual_list) > total_blocks:
-             visual_list = visual_list[:total_blocks]
+        # Expand current state to sub-unit resolution
+        # This maps the tasks (e.g. 5 tasks) to 160 sub-units
+        expanded_state = []
+        for i in range(self.total):
+            count = (i + 1) * total_sub_units // self.total - len(expanded_state)
+            expanded_state.extend([self.state[i]] * count)
+            
+        # Ensure exact length (pad or trim)
+        if len(expanded_state) < total_sub_units:
+             expanded_state.extend([0] * (total_sub_units - len(expanded_state)))
+        elif len(expanded_state) > total_sub_units:
+             expanded_state = expanded_state[:total_sub_units]
 
-        # Build Grid: Vertical Fill (Top-Left -> Bottom-Left -> Top-Next...)
-        # Index i in visual_list corresponds to a position.
-        # We want to fill Column 0 (Row 0, Row 1), then Column 1 (Row 0, Row 1)...
-        
-        # Row 0 contains indices: 0, 2, 4, ...
-        # Row 1 contains indices: 1, 3, 5, ...
-        
+        # Symbols for "Done" (Green) Gradient
+        # 0: Empty, 1: Quarter, 2: Half, 3: Three-Quarter, 4: Full
+        done_symbols = ["□", "▖", "◧", "▜", "▣"]
+        skipped_symbol = "▧" 
+
         row_strings = ["", ""]
         
+        # Process each block (group of 4 sub-units)
         for i in range(total_blocks):
-            val = visual_list[i]
-            if val == 1: sym = "▣"
-            elif val == 2: sym = "▧"
-            else: sym = "□"
+            # Get the slice of 4 sub-units
+            chunk = expanded_state[i*4 : (i+1)*4]
             
-            # If even index -> Row 0
-            # If odd index -> Row 1
+            dones = chunk.count(1)
+            skippeds = chunk.count(2)
+            todos = chunk.count(0)
+            
+            # Determine symbol based on content
+            if dones == 0 and skippeds == 0:
+                sym = done_symbols[0] # Empty
+            elif skippeds > dones:
+                sym = skipped_symbol # Majority Skipped
+            else:
+                # Majority Done (or equal), calculate fullness (1-4)
+                # Count both Done and Skipped as "filling" the bar, but texture as Done
+                fill_level = (dones + skippeds + todos) # Total valid (should be 4)
+                # Actually we want how full it is of non-todos
+                fill_level = 4 - todos
+                sym = done_symbols[fill_level]
+
             row_strings[i % 2] += sym
             
         return "\n".join(row_strings)
@@ -228,6 +232,10 @@ class TaskView(discord.ui.View):
             await self.update_message(interaction)
 
     async def finish_logic(self, interaction):
+        # 1. Convert all remaining '0' (Todo) to '2' (Skipped)
+        self.state = [2 if x == 0 else x for x in self.state]
+        
+        # 2. Calculate score (Only '1's count)
         greens = [x for x in self.state if x == 1]
         percent_complete = int((len(greens) / self.total) * 100)
         
