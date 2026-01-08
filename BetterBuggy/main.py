@@ -17,7 +17,7 @@ except ImportError:
 # 1. LocalCollection Class: Handles database.json interactions.
 # 2. Config & DB Setup: Loads settings and active tasks.
 # 3. TaskView Class: The UI for the progress bar (Buttons & Logic).
-# 4. Helper: get_ansi_bar(state): Creates the colored progress bar (2x50 Grid).
+# 4. Helper: get_emoji_bar(state): Creates the creative symbol bar (20x2 Grid).
 # 5. Helper: get_celebratory_message(percent): Picks the right message.
 # 6. Event: on_ready(): Startup sequence & View persistence.
 # 7. Event: on_message(message): Handles Sleep commands & Task creation.
@@ -131,69 +131,67 @@ class TaskView(discord.ui.View):
         self.message_id = message_id
         self.history = [] # Stack for Undo
 
-    def get_ansi_bar(self):
+    def get_emoji_bar(self):
         if self.total == 0: return ""
         
-        # 1. Scale actual tasks to 100 visual blocks
-        visual_blocks = []
-        accumulated_width = 0
+        cols = 20
+        rows = 2
+        total_blocks = cols * rows
         
-        for i in range(self.total):
-            # Calculate how many blocks this specific task should occupy
-            # using floating point logic relative to 100
-            target_width = (i + 1) * 100 // self.total
-            width = target_width - accumulated_width
-            
-            visual_blocks.extend([self.state[i]] * width)
-            accumulated_width += width
-            
-        # Ensure we have exactly 100 blocks (should be exact due to logic above, but safety first)
-        if len(visual_blocks) < 100:
-            visual_blocks.extend([0] * (100 - len(visual_blocks)))
-        elif len(visual_blocks) > 100:
-            visual_blocks = visual_blocks[:100]
-
-        # 2. Build the Grid (2 rows, 50 columns)
-        # Filling order: Vertical (Top-Left -> Bottom-Left -> Top-Col2...)
-        # Index 0 -> Row 0, Col 0
-        # Index 1 -> Row 1, Col 0
-        # Index 2 -> Row 0, Col 1
-        # Index 3 -> Row 1, Col 1
+        greens = self.state.count(1)
+        oranges = self.state.count(2)
         
-        row0_str = ""
-        row1_str = ""
+        # Calculate block counts
+        g_blocks = int((greens / self.total) * total_blocks)
+        o_blocks = int((oranges / self.total) * total_blocks)
+        w_blocks = total_blocks - g_blocks - o_blocks
         
-        # ANSI Colors for Big Blocks
-        C_RESET = "\u001b[0m"
-        C_GREEN = "\u001b[1;32m"  # Bright Green
-        C_ORANGE = "\u001b[1;33m" # Bright Yellow/Gold (closest to Orange)
-        C_WHITE = "\u001b[0;37m"  # Standard White/Gray
-        
-        SYMBOL = "█"
-        
-        for i in range(100):
-            val = visual_blocks[i]
-            if val == 1: color = C_GREEN
-            elif val == 2: color = C_ORANGE
-            else: color = C_WHITE
-            
-            block_char = f"{color}{SYMBOL}{C_RESET}"
-            
-            # Even indices go to Row 0, Odd indices go to Row 1
-            if i % 2 == 0:
-                row0_str += block_char
-            else:
-                row1_str += block_char
+        # Full completion check
+        if 0 not in self.state:
+            if w_blocks > 0:
+                if greens >= oranges:
+                    g_blocks += w_blocks
+                else:
+                    o_blocks += w_blocks
+                w_blocks = 0
                 
-        return f"```ansi\n{row0_str}\n{row1_str}\n```"
+        # Create linear list of blocks
+        visual_list = [1] * g_blocks + [2] * o_blocks + [0] * w_blocks
+        
+        # Ensure exact length of 40 in case of rounding errors
+        if len(visual_list) < total_blocks:
+             visual_list.extend([0] * (total_blocks - len(visual_list)))
+        elif len(visual_list) > total_blocks:
+             visual_list = visual_list[:total_blocks]
+
+        # Build Grid: Vertical Fill (Top-Left -> Bottom-Left -> Top-Next...)
+        # Index i in visual_list corresponds to a position.
+        # We want to fill Column 0 (Row 0, Row 1), then Column 1 (Row 0, Row 1)...
+        
+        # Row 0 contains indices: 0, 2, 4, ...
+        # Row 1 contains indices: 1, 3, 5, ...
+        
+        row_strings = ["", ""]
+        
+        for i in range(total_blocks):
+            val = visual_list[i]
+            if val == 1: sym = "▣"
+            elif val == 2: sym = "▧"
+            else: sym = "□"
+            
+            # If even index -> Row 0
+            # If odd index -> Row 1
+            row_strings[i % 2] += sym
+            
+        return "\n".join(row_strings)
 
     async def update_message(self, interaction, finished=False, congratulation=None):
         # Line 1: User Mention with Count
-        # Line 2: ANSI Grid
+        # Line 2: Geometric Bar (Linear)
         # Line 3: Buttons OR Congratulation Message
         
         completed_tasks = self.state.count(1) + self.state.count(2)
-        content = f"<@{self.user_id}>'s tasks: {completed_tasks}/{self.total}\n{self.get_ansi_bar()}"
+        content = f"<@{self.user_id}>'s tasks: {completed_tasks}/{self.total}\n{self.get_emoji_bar()}"
         
         if finished and congratulation:
             content += f"\n🎉 **{congratulation}**"
@@ -252,7 +250,7 @@ class TaskView(discord.ui.View):
             return await self.finish_logic(interaction)
 
         self.history.append((idx, 0))
-        self.state[idx] = 1 # Green
+        self.state[idx] = 1 # Green (Done)
         await self.check_completion(interaction)
 
     @discord.ui.button(label="Skip One", style=discord.ButtonStyle.danger, custom_id="bb_skip")
@@ -265,7 +263,7 @@ class TaskView(discord.ui.View):
             return await self.finish_logic(interaction)
 
         self.history.append((idx, 0))
-        self.state[idx] = 2 # Orange/Yellow
+        self.state[idx] = 2 # Orange (Skipped)
         await self.check_completion(interaction)
 
     @discord.ui.button(label="Undo", style=discord.ButtonStyle.secondary, custom_id="bb_undo")
@@ -359,7 +357,7 @@ async def on_message(message):
 
             view = TaskView(user_id=message.author.id, total=num)
             msg = await message.channel.send(
-                f"<@{message.author.id}>'s tasks: 0/{num}\n{view.get_ansi_bar()}",
+                f"<@{message.author.id}>'s tasks: 0/{num}\n{view.get_emoji_bar()}",
                 view=view
             )
             
