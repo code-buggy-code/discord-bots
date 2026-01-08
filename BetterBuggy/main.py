@@ -379,7 +379,7 @@ async def on_message(message):
                             
                     if message_exists:
                         await message.channel.send(
-                            f"{message.author.mention} You already have an active list! Please finish it or delete it first.",
+                            f"{message.author.mention} You already have an active list! Please resolve it first.",
                             delete_after=5
                         )
                         return
