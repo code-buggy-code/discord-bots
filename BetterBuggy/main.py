@@ -134,12 +134,12 @@ class TaskView(discord.ui.View):
     def get_emoji_bar(self):
         if self.total == 0: return ""
         
-        # Grid Size: 30 Columns x 2 Rows = 60 Squares total
-        cols = 30
+        # Grid Size: 16 Columns x 2 Rows = 32 Squares total
+        cols = 16
         rows = 2
         total_visual_blocks = cols * rows
         
-        # We need to map 'self.total' tasks onto '60' visual squares.
+        # We need to map 'self.total' tasks onto '32' visual squares.
         # We will create an expanded list representing the visual state.
         
         visual_state = []
@@ -155,14 +155,14 @@ class TaskView(discord.ui.View):
             visual_state.extend([self.state[i]] * blocks_for_this_task)
             current_visual_count += blocks_for_this_task
             
-        # Safety check to ensure exactly 60 blocks
+        # Safety check to ensure exactly 32 blocks
         if len(visual_state) < total_visual_blocks:
             visual_state.extend([0] * (total_visual_blocks - len(visual_state)))
         elif len(visual_state) > total_visual_blocks:
             visual_state = visual_state[:total_visual_blocks]
 
         # Symbols - Using standard large square emojis to ensure consistent size and spacing
-        SYM_DONE = "⬛" # Black Large Square (Consistent with White/Orange)
+        SYM_DONE = "🟩" # Green Square
         SYM_SKIP = "🟧" # Orange Large Square
         SYM_TODO = "⬜" # White Large Square
 
@@ -171,8 +171,8 @@ class TaskView(discord.ui.View):
         # Row 1: Odd indices (1, 3, 5...)
         # This creates a vertical-first fill (Top-Left, Bottom-Left, Top-Next...)
         
-        row0 = ""
-        row1 = ""
+        row0 = "-#"
+        row1 = "-#"
         
         for i in range(total_visual_blocks):
             val = visual_state[i]
@@ -189,7 +189,7 @@ class TaskView(discord.ui.View):
 
     async def update_message(self, interaction, finished=False, congratulation=None):
         # Line 1: User Mention with Count
-        # Line 2: Geometric Bar (30x2)
+        # Line 2: Geometric Bar (16x2)
         # Line 3: Buttons OR Congratulation Message
         
         completed_tasks = self.state.count(1) + self.state.count(2)
