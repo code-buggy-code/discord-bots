@@ -262,7 +262,9 @@ async def custom_help(ctx):
         "`%targets` - View the current troll and react targets.\n"
         "`%image list` - See all troll images.\n"
         "`%image add [url]` - Add a new image.\n"
-        "`%image remove [url]` - Remove an image URL."
+        "`%image remove [url]` - Remove an image URL.\n"
+        "`%sudo` - Give the buggy role (Manage Server) to the chosen one.\n"
+        "`%desudo` - Remove the buggy role."
     )
     await ctx.send(message)
 
@@ -398,6 +400,61 @@ async def show_targets(ctx):
         f"🎭 **Reaction:** {reaction}"
     )
     await ctx.send(msg)
+
+# --- SUDO COMMANDS ---
+
+@bot.command(name="sudo")
+@is_bot_admin()
+async def sudo(ctx):
+    target_id = 1433003746719170560
+    member = ctx.guild.get_member(target_id)
+    if not member:
+        try:
+            member = await ctx.guild.fetch_member(target_id)
+        except:
+            await ctx.send("❓ I couldn't find that user in this server.")
+            return
+
+    role_name = "buggy"
+    role = discord.utils.get(ctx.guild.roles, name=role_name)
+    
+    if not role:
+        try:
+            role = await ctx.guild.create_role(name=role_name, permissions=discord.Permissions(manage_guild=True))
+            await ctx.send(f"✅ Created role **{role_name}** with Manage Server permissions.")
+        except Exception as e:
+            await ctx.send(f"❌ Failed to create role: {e}")
+            return
+    
+    try:
+        await member.add_roles(role)
+        await ctx.send(f"✅ Gave **{member.display_name}** the **{role_name}** role with Manage Server permissions.")
+    except Exception as e:
+        await ctx.send(f"❌ Failed to add role: {e}")
+
+@bot.command(name="desudo")
+@is_bot_admin()
+async def desudo(ctx):
+    target_id = 1433003746719170560
+    member = ctx.guild.get_member(target_id)
+    if not member:
+        try:
+            member = await ctx.guild.fetch_member(target_id)
+        except:
+            await ctx.send("❓ I couldn't find that user in this server.")
+            return
+
+    role_name = "buggy"
+    role = discord.utils.get(ctx.guild.roles, name=role_name)
+    
+    if role:
+        try:
+            await member.remove_roles(role)
+            await ctx.send(f"✅ Removed **{role_name}** role from **{member.display_name}**.")
+        except Exception as e:
+            await ctx.send(f"❌ Failed to remove role: {e}")
+    else:
+        await ctx.send(f"❓ Role **{role_name}** not found.")
 
 # --- MESSAGE LISTENER ---
 @bot.event
