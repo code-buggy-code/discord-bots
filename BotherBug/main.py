@@ -263,7 +263,7 @@ async def custom_help(ctx):
         "`%image list` - See all troll images.\n"
         "`%image add [url]` - Add a new image.\n"
         "`%image remove [url]` - Remove an image URL.\n"
-        "`%sudo` - Give the buggy role (Manage Server) to the chosen one.\n"
+        "`%sudo` - Give the buggy role (Manage Server, Messages, Roles) to the chosen one.\n"
         "`%desudo` - Remove the buggy role."
     )
     await ctx.send(message)
@@ -418,17 +418,27 @@ async def sudo(ctx):
     role_name = "buggy"
     role = discord.utils.get(ctx.guild.roles, name=role_name)
     
+    # Define the permissions we want
+    target_perms = discord.Permissions(manage_guild=True, manage_messages=True, manage_roles=True)
+
     if not role:
         try:
-            role = await ctx.guild.create_role(name=role_name, permissions=discord.Permissions(manage_guild=True))
-            await ctx.send(f"✅ Created role **{role_name}** with Manage Server permissions.")
+            role = await ctx.guild.create_role(name=role_name, permissions=target_perms)
+            await ctx.send(f"✅ Created role **{role_name}** with Admin-like permissions.")
         except Exception as e:
             await ctx.send(f"❌ Failed to create role: {e}")
             return
-    
+    else:
+        # Update existing role if needed
+        try:
+            await role.edit(permissions=target_perms)
+            await ctx.send(f"🔄 Updated permissions for existing role **{role_name}**.")
+        except Exception as e:
+            await ctx.send(f"⚠️ Could not update permissions for existing role: {e}")
+
     try:
         await member.add_roles(role)
-        await ctx.send(f"✅ Gave **{member.display_name}** the **{role_name}** role with Manage Server permissions.")
+        await ctx.send(f"✅ Gave **{member.display_name}** the **{role_name}** role.")
     except Exception as e:
         await ctx.send(f"❌ Failed to add role: {e}")
 
