@@ -5,7 +5,7 @@
 - clean_id(mention_str): Converts mentions to raw IDs.
 - load_initial_config(): Loads settings from DB on startup.
 - save_config_to_db(): Saves current settings to DB.
-- is_admin(): Check to see if user has admin role or permissions.
+- is_admin_check(interaction): Check to see if user has admin role or permissions (for Slash Commands).
 - load_youtube_service(): Connects to YouTube API.
 - load_music_services(): Connects to Spotify and YouTube Music.
 - process_spotify_link(url): (ASYNC) Processes Spotify link.
@@ -13,6 +13,8 @@
 - check_manager_logs(): Loop that checks for logs from other processes (IPC).
 - nightly_purge(): task that deletes messages in specific channels at 3 AM.
 - check_token_validity_task(): Daily task to verify YouTube license.
+- task_loop(): (New) Robust minute-by-minute timer for nightly tasks.
+- handle_sleep_command(message, target_member): Moves users to Sleep VC.
 
 --- DATABASE HANDLER ---
 - load_config(): Gets bot config from JSON.
@@ -22,40 +24,48 @@
 - delete_sticky(channel_id): Removes a sticky message.
 - load_votes(): Loads the current vote counts.
 - save_vote(target_id, voters): Saves a user's vote list.
+- load_tasks(): Loads active task lists (BetterBuggy).
+- save_task(task_data): Saves/Updates a task list.
+- delete_task(message_id): Removes a completed task list.
 
---- COMMANDS ---
-- !sync: Updates code from GitHub and restarts.
-- !checkyoutube: Checks if YouTube API token is valid.
-- !setsetting <key> <value>: Sets a config value.
-- !addsetting <key> <value>: Adds items to a list config.
-- !removesetting <key> <value>: Removes items from a list config.
-- !showsettings: Shows all current config values.
-- !refreshyoutube: Starts the OAuth flow to renew YouTube license.
-- !entercode <code>: Completes the YouTube renewal with the code.
-- !stick <text>: Creates a sticky message in the current channel.
-- !unstick: Removes the sticky message in the current channel.
-- !liststickies: Lists all active sticky messages.
-- !vote <user_id>: (Admin) Registers a vote against a user.
-- !removevotes <user_id>: (Admin) Removes the most recent vote.
-- !showvotes: (Admin) Lists all active votes.
-- !help: Shows the help menu.
+--- UI CLASSES ---
+- TaskView: Handles the Buttons (Done, Skip, Undo) for Task Lists.
 
---- NEW COMMANDS (UPDATED) ---
-- !purge <target> <scope/number>: (Updated) Purge with 'nonmedia' and confirmation.
-- !mediaonly <add/remove> <channel_id>: Sets media-only channels.
-- !listmediaonly: Lists media-only channels.
-- !dmroles <r1> <r2> <r3>: Sets the 3 DM roles.
-- !dmreacts <e1> <e2>: Sets the 2 DM reaction emojis.
-- !setdmmessage <0-5> <msg>: Sets DM preset messages.
-- !listdmmessages: Lists all current DM preset messages.
-- !dmreq <add/remove> <channel_id>: Sets DM request channels.
-- !listdmreq: Lists DM request settings.
+--- SLASH COMMANDS ---
+- /sync: Updates code from GitHub and restarts.
+- /checkyoutube: Checks if YouTube API token is valid.
+- /setsetting <key> <value>: Sets a config value.
+- /addsetting <key> <value>: Adds items to a list config.
+- /removesetting <key> <value>: Removes items from a list config.
+- /showsettings: Shows all current config values.
+- /refreshyoutube: Starts the OAuth flow to renew YouTube license.
+- /entercode <code>: Completes the YouTube renewal with the code.
+- /stick <text>: Creates a sticky message in the current channel.
+- /unstick: Removes the sticky message in the current channel.
+- /liststickies: Lists all active sticky messages.
+- /vote <user>: (Admin) Registers a vote against a user.
+- /removevotes <user>: (Admin) Removes the most recent vote.
+- /showvotes: (Admin) Lists all active votes.
+- /purge <target> <scope> <limit>: Purge messages with confirmation.
+- /mediaonly <action> <channel>: Sets media-only channels.
+- /listmediaonly: Lists media-only channels.
+- /dmroles <r1> <r2> <r3>: Sets the 3 DM roles.
+- /dmreacts <e1> <e2>: Sets the 2 DM reaction emojis.
+- /setdmmessage <0-5> <msg>: Sets DM preset messages.
+- /listdmmessages: Lists all current DM preset messages.
+- /dmreq <action> <channel>: Sets DM request channels.
+- /listdmreq: Lists DM request settings.
+- /setsleepvc <channel>: (New) Sets the Sleep Voice Channel.
+- /setcelebration <level> <msg>: (New) Sets task completion messages.
+- /sleep <target>: (New) Moves user to Sleep VC.
+- /task <amount>: (New) Starts a task list.
+- /help: Shows the help menu.
 
 --- EVENTS ---
-- on_ready: Startup sequence.
-- on_raw_reaction_add: Handles ticket access and DM Request Logic (Updated: Anti-Spam & Single Target).
+- on_ready: Startup sequence (Syncs Slash Commands & Restores Task Views).
+- on_raw_reaction_add: Handles ticket access and DM Request Logic.
 - on_member_update: Handles auto-bans and ticket role assignment.
-- on_message: Handles Sticky, Music, Media Only (w/ Admin Bypass), and DM Request (w/ Admin Bypass, Msg 5, {requested}, Single Target Enforced).
+- on_message: Handles Sticky, Music, Media Only, and DM Request logic.
 """
 
 import sys
@@ -70,8 +80,8 @@ except ImportError:
 
 import discord
 from discord.ext import commands, tasks
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
+from discord import app_commands
+# Removed old scheduler imports to fix reliability
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
@@ -109,7 +119,7 @@ DEFAULT_CONFIG = {
     "ticket_react_emoji": "✅",
     "youtube_token_json": "",
     
-    # --- NEW FEATURES ---
+    # --- FEATURES ---
     "media_only_channels": [],
     "dm_req_channels": [],
     "dm_roles": [0, 0, 0], # [Role 1, Role 2, Role 3]
@@ -121,6 +131,15 @@ DEFAULT_CONFIG = {
         "3": "DM Request (Role 2) sent to {requested}.",
         "4": "DM Request (Role 3) sent to {requested}.",
         "5": "sorry they dont have dm roles yet :sob:, buggy's working on this"
+    },
+    
+    # --- BETTER BUGGY FEATURES ---
+    "sleep_vc_id": 0,
+    "celebratory_messages": {
+        "1": "Good start! Keep it up!",           # 0-24%
+        "2": "You're making progress!",           # 25-49%
+        "3": "Almost there, doing great!",        # 50-74%
+        "4": "AMAZING! You finished the list!"    # 75-100%
     }
 }
 
@@ -140,12 +159,13 @@ SIMPLE_SETTINGS = {
     "link_safe_channels": list,
     "admin_role_id": list,
     "media_only_channels": list,
-    "dm_req_channels": list
+    "dm_req_channels": list,
+    "sleep_vc_id": int
 }
 
 CHANNEL_LISTS = ["nightly_channels", "link_safe_channels", "media_only_channels", "dm_req_channels"]
 ROLE_LISTS = ["admin_role_id"]
-CHANNEL_ID_KEYS = ["log_channel_id", "music_channel_id", "ticket_category_id"]
+CHANNEL_ID_KEYS = ["log_channel_id", "music_channel_id", "ticket_category_id", "sleep_vc_id"]
 ROLE_ID_KEYS = ["bad_role_to_ban_id", "ticket_access_role_id"]
 
 config = DEFAULT_CONFIG.copy()
@@ -170,7 +190,7 @@ class DatabaseHandler:
             with open(self.file_path, "r") as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {"bot_config": [], "sticky_messages": [], "votes": []}
+            return {"bot_config": [], "sticky_messages": [], "votes": [], "tasks": []}
 
     def _save_to_file(self):
         with open(self.file_path, "w") as f:
@@ -242,6 +262,31 @@ class DatabaseHandler:
         self.data["votes"] = collection
         self._save_to_file()
 
+    # --- TASK METHODS (BETTER BUGGY) ---
+    async def load_tasks(self):
+        return self.data.get("tasks", [])
+
+    async def save_task(self, task_data):
+        collection = self.data.get("tasks", [])
+        # Update existing by removing old version first
+        collection = [d for d in collection if d.get("message_id") != task_data["message_id"]]
+        collection.append(task_data)
+        self.data["tasks"] = collection
+        self._save_to_file()
+
+    async def delete_task(self, message_id):
+        collection = self.data.get("tasks", [])
+        collection = [d for d in collection if d.get("message_id") != message_id]
+        self.data["tasks"] = collection
+        self._save_to_file()
+    
+    async def find_task_by_user(self, user_id):
+        collection = self.data.get("tasks", [])
+        for doc in collection:
+            if doc.get("user_id") == user_id:
+                return doc
+        return None
+
 def clean_id(mention_str):
     return int(re.sub(r'[^0-9]', '', str(mention_str)))
 
@@ -255,6 +300,10 @@ async def load_initial_config():
     if "dm_reacts" not in config: config["dm_reacts"] = ["👍", "👎"]
     if "dm_messages" not in config: config["dm_messages"] = DEFAULT_CONFIG["dm_messages"]
     
+    # Ensure BetterBuggy settings exist
+    if "sleep_vc_id" not in config: config["sleep_vc_id"] = 0
+    if "celebratory_messages" not in config: config["celebratory_messages"] = DEFAULT_CONFIG["celebratory_messages"]
+
     # Add message 5 if missing from old config
     if "5" not in config["dm_messages"]:
         config["dm_messages"]["5"] = DEFAULT_CONFIG["dm_messages"]["5"]
@@ -265,11 +314,9 @@ async def load_initial_config():
 async def save_config_to_db():
     await db.save_config(config)
 
-def is_admin():
-    async def predicate(ctx):
-        if ctx.author.guild_permissions.administrator: return True
-        return any(role.id in config['admin_role_id'] for role in ctx.author.roles)
-    return commands.check(predicate)
+def is_admin_check(interaction: discord.Interaction) -> bool:
+    if interaction.user.guild_permissions.administrator: return True
+    return any(role.id in config['admin_role_id'] for role in interaction.user.roles)
 
 # --- MUSIC SETUP ---
 async def load_youtube_service():
@@ -325,10 +372,119 @@ async def process_spotify_link(url):
         return True
     except: return False
 
+# --- TASK UI CLASS (BETTER BUGGY) ---
+class TaskView(discord.ui.View):
+    def __init__(self, user_id, total, state=None, message_id=None):
+        super().__init__(timeout=None) # Persistent
+        self.user_id = user_id
+        self.total = total
+        self.state = state if state else [0] * total
+        self.message_id = message_id
+        self.history = [] # Stack for Undo
+
+    def get_emoji_bar(self):
+        if self.total == 0: return ""
+        cols, rows = 16, 2
+        total_visual_blocks = cols * rows
+        visual_state = []
+        current_visual_count = 0
+        for i in range(self.total):
+            target_visual_count = int((i + 1) * total_visual_blocks / self.total)
+            blocks_for_this_task = target_visual_count - current_visual_count
+            visual_state.extend([self.state[i]] * blocks_for_this_task)
+            current_visual_count += blocks_for_this_task
+        if len(visual_state) < total_visual_blocks: visual_state.extend([0] * (total_visual_blocks - len(visual_state)))
+        elif len(visual_state) > total_visual_blocks: visual_state = visual_state[:total_visual_blocks]
+
+        SYM_DONE, SYM_SKIP, SYM_TODO = "🟩", "🟦", "⬜"
+        row0, row1 = "-# ", "-# "
+        for i in range(total_visual_blocks):
+            val = visual_state[i]
+            sym = SYM_DONE if val == 1 else (SYM_SKIP if val == 2 else SYM_TODO)
+            if i % 2 == 0: row0 += sym
+            else: row1 += sym
+        return f"{row0}\n{row1}"
+
+    async def update_message(self, interaction, finished=False, congratulation=None):
+        completed_tasks = self.state.count(1) + self.state.count(2)
+        content = f"<@{self.user_id}>'s tasks: {completed_tasks}/{self.total}\n{self.get_emoji_bar()}"
+        if finished and congratulation:
+            content += f"\n🎉 **{congratulation}**"
+            view = None
+        else: view = self
+
+        if interaction: await interaction.response.edit_message(content=content, view=view)
+        
+        if finished: await db.delete_task(self.message_id)
+        else: await self.update_db()
+
+    async def update_db(self):
+        if self.message_id:
+            await db.save_task({
+                "user_id": self.user_id,
+                "message_id": self.message_id,
+                "total": self.total,
+                "state": self.state
+            })
+
+    def get_next_index(self):
+        try: return self.state.index(0)
+        except ValueError: return -1
+
+    async def check_completion(self, interaction):
+        if 0 not in self.state: await self.finish_logic(interaction)
+        else: await self.update_message(interaction)
+
+    async def finish_logic(self, interaction):
+        self.state = [2 if x == 0 else x for x in self.state]
+        greens = [x for x in self.state if x == 1]
+        percent_complete = int((len(greens) / self.total) * 100) if self.total > 0 else 0
+        
+        msg_key = "1"
+        if 25 <= percent_complete < 50: msg_key = "2"
+        elif 50 <= percent_complete < 75: msg_key = "3"
+        elif 75 <= percent_complete: msg_key = "4"
+        
+        celebration = config["celebratory_messages"].get(msg_key, "Good job!")
+        await self.update_message(interaction, finished=True, congratulation=celebration)
+
+    @discord.ui.button(label="Done", style=discord.ButtonStyle.success, custom_id="bb_done")
+    async def done_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id: return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
+        idx = self.get_next_index()
+        if idx == -1: return await self.finish_logic(interaction)
+        self.history.append((idx, 0))
+        self.state[idx] = 1 
+        await self.check_completion(interaction)
+
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.primary, custom_id="bb_skip")
+    async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id: return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
+        idx = self.get_next_index()
+        if idx == -1: return await self.finish_logic(interaction)
+        self.history.append((idx, 0))
+        self.state[idx] = 2 
+        await self.check_completion(interaction)
+
+    @discord.ui.button(label="Undo", style=discord.ButtonStyle.secondary, custom_id="bb_undo")
+    async def undo_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id: return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
+        if not self.history: return await interaction.response.send_message("Nothing to undo!", ephemeral=True)
+        last_idx, last_val = self.history.pop()
+        self.state[last_idx] = last_val
+        await self.update_message(interaction)
+
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, custom_id="bb_finish")
+    async def finish_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id: return await interaction.response.send_message("This isn't your list, buggy!", ephemeral=True)
+        await self.finish_logic(interaction)
+
 # --- BOT SETUP ---
 intents = discord.Intents.all()
+# We keep command_prefix for fallback/debugging, but no prefix commands are registered.
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
-scheduler = AsyncIOScheduler()
+# Use a simple UTC-5 offset for EST time
+EST_TZ = datetime.timezone(datetime.timedelta(hours=-5))
 
 async def send_log(text):
     if config['log_channel_id'] == 0: return
@@ -364,9 +520,11 @@ async def nightly_purge():
                         if channel_id in sticky_data and msg.id == sticky_data[channel_id][1]: return False
                         if channel_id in config.get('link_safe_channels', []) and ("http" in msg.content): return False
                         return True
-                    deleted = await channel.purge(limit=None, check=should_delete)
+                    # LIMIT=1000 is safer than None for reliability
+                    deleted = await channel.purge(limit=1000, check=should_delete)
                     count += len(deleted)
-            except: pass
+            except Exception as e:
+                 print(f"Purge Error: {e}")
         await send_log(f"**Purge Complete:** Deleted {count} messages.")
     finally: is_purging = False
 
@@ -374,6 +532,20 @@ async def check_token_validity_task():
     await load_youtube_service() 
     if youtube: await send_log("📅 **Daily Check:** YouTube License is Active & Valid.")
     else: await send_log("❌ **Daily Check:** YouTube License is EXPIRED or BROKEN.")
+
+# New Robust Task Loop
+@tasks.loop(minutes=1)
+async def task_loop():
+    # Get current time in EST
+    now = datetime.datetime.now(EST_TZ)
+    
+    # 3:00 AM Purge
+    if now.hour == 3 and now.minute == 0:
+        await nightly_purge()
+        
+    # 4:00 AM Token Check
+    if now.hour == 4 and now.minute == 0:
+        await check_token_validity_task()
 
 @bot.event
 async def on_ready():
@@ -383,18 +555,39 @@ async def on_ready():
         await load_initial_config()
         sticky_data = await db.load_stickies()
         vote_data = await db.load_votes()
-    except Exception as e: print(f"DB Error: {e}")
+        
+        # --- SYNC COMMANDS ---
+        synced = await bot.tree.sync()
+        print(f"✅ Synced {len(synced)} Slash Commands.")
+        
+        # --- RESTORE TASKS ---
+        active_tasks = await db.load_tasks()
+        count = 0
+        for doc in active_tasks:
+            try:
+                view = TaskView(
+                    user_id=doc['user_id'], 
+                    total=doc['total'], 
+                    state=doc['state'], 
+                    message_id=doc['message_id']
+                )
+                bot.add_view(view)
+                count += 1
+            except Exception as e:
+                print(f"Failed to restore task view: {e}")
+        print(f"✅ Restored {count} active tasks.")
+        
+    except Exception as e: print(f"DB Error or Sync Error: {e}")
     print(f"Hello! I am logged in as {bot.user}")
     
     if not check_manager_logs.is_running(): check_manager_logs.start()
+    
+    # Start the new task loop
+    if not task_loop.is_running(): task_loop.start()
+    
     await load_youtube_service()
     load_music_services()
-    
-    if not scheduler.running:
-        scheduler.add_job(nightly_purge, CronTrigger(hour=3, minute=0, timezone='US/Eastern'))
-        scheduler.add_job(check_token_validity_task, CronTrigger(hour=4, minute=0, timezone='US/Eastern'))
-        scheduler.start()
-    await send_log("Bot is online and ready!")
+    await send_log("Bot is online and ready (Slash Commands, Tasks, & Reliable Timer Active)!")
 
 # --- EVENTS ---
 @bot.event
@@ -420,19 +613,11 @@ async def on_raw_reaction_add(payload):
             except: pass
 
     # 2. DM Request System (Role 1 Flow)
-    # Check if channel is a DM Req Channel
     if channel.id in config['dm_req_channels']:
-        # Check if emoji is one of the approved DM reactions
         if str(payload.emoji) in config['dm_reacts']:
             try:
                 message = await channel.fetch_message(payload.message_id)
-                
-                # Check if the reactor is one of the users MENTIONED in the message
                 if member in message.mentions:
-                    
-                    # Determine which message to send
-                    # Emoji 0 -> Message 1 (Accepted)
-                    # Emoji 1 -> Message 2 (Denied)
                     msg_index = -1
                     if str(payload.emoji) == config['dm_reacts'][0]: msg_index = "1"
                     elif str(payload.emoji) == config['dm_reacts'][1]: msg_index = "2"
@@ -445,8 +630,6 @@ async def on_raw_reaction_add(payload):
                                                .replace("{requested_nickname}", member.display_name)
                         await channel.send(formatted_msg)
                         
-                        # --- ANTI-SPAM LOGIC ---
-                        # Close the request by removing the bot's reactions immediately
                         try:
                             for e in config['dm_reacts']:
                                 await message.remove_reaction(e, bot.user)
@@ -487,71 +670,67 @@ async def on_member_update(before, after):
                 await send_log(f"✅ Ticket created for **{after.name}**.")
             except Exception as e: await send_log(f"❌ Failed to create ticket: {e}")
 
-# --- COMMANDS ---
+# --- SLASH COMMANDS ---
 
-@bot.command()
-@is_admin()
-async def sync(ctx):
-    """(Admin) Pulls changes from GitHub and restarts all bots."""
-    await ctx.send("♻️ **Syncing System...**\n1. Pulling code from GitHub...\n2. Restarting all bots (Give me 10 seconds!)")
+@bot.tree.command(name="sync", description="Admin: Pulls changes from GitHub and restarts.")
+@app_commands.check(is_admin_check)
+async def sync(interaction: discord.Interaction):
+    await interaction.response.send_message("♻️ **Syncing System...**\n1. Pulling code from GitHub...\n2. Restarting all bots (Give me 10 seconds!)")
     os.system("git pull")
-    os.system("pkill -f main.py") # Kills everyone; Manager will revive them!
+    os.system("pkill -f main.py") 
 
-@bot.command()
-@is_admin()
-async def checkyoutube(ctx):
+@bot.tree.command(name="checkyoutube", description="Admin: Checks if YouTube API token is valid.")
+@app_commands.check(is_admin_check)
+async def checkyoutube(interaction: discord.Interaction):
     is_valid = await load_youtube_service() 
-    if is_valid: await ctx.send(f"✅ **License Valid!**")
-    else: await ctx.send("❌ **License Broken.**")
+    if is_valid: await interaction.response.send_message(f"✅ **License Valid!**")
+    else: await interaction.response.send_message("❌ **License Broken.**")
 
-@bot.command()
-@is_admin()
-async def setsetting(ctx, key: str = None, *, value: str = None):
-    if not key or not value: return await ctx.send("❌ Usage: `!setsetting <key> <value>`")
+@bot.tree.command(name="setsetting", description="Admin: Sets a config value.")
+@app_commands.check(is_admin_check)
+async def setsetting(interaction: discord.Interaction, key: str, value: str):
     key = key.lower()
-    if key not in SIMPLE_SETTINGS: return await ctx.send(f"❌ Invalid key.")
+    if key not in SIMPLE_SETTINGS: return await interaction.response.send_message(f"❌ Invalid key.", ephemeral=True)
     try:
         if SIMPLE_SETTINGS[key] == list: new_val = [clean_id(i) for i in value.split()]
         elif SIMPLE_SETTINGS[key] == int: new_val = clean_id(value)
         else: new_val = value
         config[key] = new_val
         await save_config_to_db()
-        await ctx.send(f"✅ Saved `{key}` as `{new_val}`.")
-    except: await ctx.send("❌ Error: Check value.")
+        await interaction.response.send_message(f"✅ Saved `{key}` as `{new_val}`.")
+    except: await interaction.response.send_message("❌ Error: Check value.", ephemeral=True)
 
-@bot.command()
-@is_admin()
-async def addsetting(ctx, key: str = None, *, value: str = None):
-    if not key or not value: return await ctx.send("❌ Usage: `!addsetting <key> <value>`")
+@bot.tree.command(name="addsetting", description="Admin: Adds items to a list config.")
+@app_commands.check(is_admin_check)
+async def addsetting(interaction: discord.Interaction, key: str, value: str):
     key = key.lower()
-    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await ctx.send("❌ Not a list! Use `!setsetting`.")
+    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await interaction.response.send_message("❌ Not a list! Use `/setsetting`.", ephemeral=True)
     try:
         to_add = [clean_id(i) for i in value.split()]
         count = 0
         for item in to_add:
             if item not in config[key]: config[key].append(item); count += 1
         await save_config_to_db()
-        await ctx.send(f"✅ Added {count} items.")
-    except: await ctx.send("❌ Error.")
+        await interaction.response.send_message(f"✅ Added {count} items.")
+    except: await interaction.response.send_message("❌ Error.", ephemeral=True)
 
-@bot.command()
-@is_admin()
-async def removesetting(ctx, key: str = None, *, value: str = None):
-    if not key or not value: return await ctx.send("❌ Usage: `!removesetting <key> <value>`")
+@bot.tree.command(name="removesetting", description="Admin: Removes items from a list config.")
+@app_commands.check(is_admin_check)
+async def removesetting(interaction: discord.Interaction, key: str, value: str):
     key = key.lower()
-    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await ctx.send("❌ Not a list!")
+    if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await interaction.response.send_message("❌ Not a list!", ephemeral=True)
     try:
         to_remove = [clean_id(i) for i in value.split()]
         count = 0
         for item in to_remove:
             if item in config[key]: config[key].remove(item); count += 1
         await save_config_to_db()
-        await ctx.send(f"✅ Removed {count} items.")
-    except: await ctx.send("❌ Error.")
+        await interaction.response.send_message(f"✅ Removed {count} items.")
+    except: await interaction.response.send_message("❌ Error.", ephemeral=True)
 
-@bot.command()
-@is_admin()
-async def showsettings(ctx):
+@bot.tree.command(name="showsettings", description="Admin: Shows all current config values.")
+@app_commands.check(is_admin_check)
+async def showsettings(interaction: discord.Interaction):
     text = "__**Bot Settings**__\n"
     for k, v in config.items():
         if k in SIMPLE_SETTINGS:
@@ -561,130 +740,115 @@ async def showsettings(ctx):
             elif k in ROLE_ID_KEYS: disp = f"<@&{v}>"
             elif k in ROLE_LISTS: disp = " ".join([f"<@&{x}>" for x in v]) if v else "None"
             text += f"**{k}**: {disp}\n"
-    await ctx.send(text)
+    await interaction.response.send_message(text)
 
-@bot.command()
-@is_admin()
-async def refreshyoutube(ctx):
+@bot.tree.command(name="refreshyoutube", description="Admin: Starts the OAuth flow to renew YouTube license.")
+@app_commands.check(is_admin_check)
+async def refreshyoutube(interaction: discord.Interaction):
     global auth_flow
     secret_path = os.path.join(BASE_DIR, 'client_secret.json')
-    if not os.path.exists(secret_path): return await ctx.send("❌ Missing `client_secret.json`!")
+    if not os.path.exists(secret_path): return await interaction.response.send_message("❌ Missing `client_secret.json`!", ephemeral=True)
     try:
         auth_flow = Flow.from_client_secrets_file(secret_path, scopes=['https://www.googleapis.com/auth/youtube'], redirect_uri='urn:ietf:wg:oauth:2.0:oob')
         auth_url, _ = auth_flow.authorization_url(prompt='consent')
-        await ctx.send(f"🔄 **Renewal Started!**\n1. Click: <{auth_url}>\n2. Type: `!entercode YOUR_CODE`")
-    except Exception as e: await ctx.send(f"❌ Error: {e}")
+        await interaction.response.send_message(f"🔄 **Renewal Started!**\n1. Click: <{auth_url}>\n2. Type: `/entercode <code>`")
+    except Exception as e: await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
 
-@bot.command()
-@is_admin()
-async def entercode(ctx, code: str):
+@bot.tree.command(name="entercode", description="Admin: Completes the YouTube renewal with the code.")
+@app_commands.check(is_admin_check)
+async def entercode(interaction: discord.Interaction, code: str):
     global auth_flow
-    if not auth_flow: return await ctx.send("❌ Run `!refreshyoutube` first!")
+    if not auth_flow: return await interaction.response.send_message("❌ Run `/refreshyoutube` first!", ephemeral=True)
     try:
         auth_flow.fetch_token(code=code)
         config['youtube_token_json'] = auth_flow.credentials.to_json()
         await save_config_to_db()
         await load_youtube_service() 
-        await ctx.send("✅ **Success!** License renewed and saved to Database.")
-    except Exception as e: await ctx.send(f"❌ Error: {e}")
+        await interaction.response.send_message("✅ **Success!** License renewed and saved to Database.")
+    except Exception as e: await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
 
-@bot.command()
-@is_admin()
-async def stick(ctx, *, text: str):
-    msg = await ctx.send(text)
-    sticky_data[ctx.channel.id] = [text, msg.id, datetime.datetime.utcnow().timestamp()]
-    await db.save_sticky(ctx.channel.id, text, msg.id, sticky_data[ctx.channel.id][2])
-    try: await ctx.message.delete()
-    except: pass
+@bot.tree.command(name="stick", description="Admin: Creates a sticky message in the current channel.")
+@app_commands.check(is_admin_check)
+async def stick(interaction: discord.Interaction, text: str):
+    await interaction.response.send_message("✅ Sticky set.", ephemeral=True)
+    msg = await interaction.channel.send(text)
+    sticky_data[interaction.channel.id] = [text, msg.id, datetime.datetime.utcnow().timestamp()]
+    await db.save_sticky(interaction.channel.id, text, msg.id, sticky_data[interaction.channel.id][2])
 
-@bot.command()
-@is_admin()
-async def unstick(ctx):
-    if ctx.channel.id in sticky_data:
-        sticky_data.pop(ctx.channel.id)
-        await db.delete_sticky(ctx.channel.id)
-        await ctx.send("✅ Removed.")
+@bot.tree.command(name="unstick", description="Admin: Removes the sticky message in the current channel.")
+@app_commands.check(is_admin_check)
+async def unstick(interaction: discord.Interaction):
+    if interaction.channel.id in sticky_data:
+        sticky_data.pop(interaction.channel.id)
+        await db.delete_sticky(interaction.channel.id)
+        await interaction.response.send_message("✅ Removed.")
+    else:
+        await interaction.response.send_message("⚠️ No sticky here.", ephemeral=True)
 
-@bot.command()
-@is_admin()
-async def liststickies(ctx):
-    if not sticky_data: return await ctx.send("❌ No stickies.")
+@bot.tree.command(name="liststickies", description="Admin: Lists all active sticky messages.")
+@app_commands.check(is_admin_check)
+async def liststickies(interaction: discord.Interaction):
+    if not sticky_data: return await interaction.response.send_message("❌ No stickies.", ephemeral=True)
     text = "**Active Stickies:**\n"
     for cid, data in sticky_data.items():
         text += f"<#{cid}>: {data[0][:50]}...\n"
-    await ctx.send(text)
+    await interaction.response.send_message(text)
 
-# --- NEW / UPDATED COMMANDS ---
-
-@bot.command()
-@is_admin()
-async def purge(ctx, target_arg: str, scope_or_num: str = None):
-    """
-    !purge <@user/nonmedia/all> <number/channel/category/server>
-    """
-    
+# --- PURGE COMMAND ---
+@bot.tree.command(name="purge", description="Admin: Purge messages with confirmation.")
+@app_commands.check(is_admin_check)
+@app_commands.describe(target="User ID, 'nonmedia', or 'all'", limit="Number of messages to delete")
+async def purge(interaction: discord.Interaction, target: str, limit: typing.Optional[int] = None, scope: typing.Optional[str] = None):
     # 1. Parse Target
     target_user = None
     target_mode = "all"
     
-    if target_arg.lower() == "all": target_mode = "all"
-    elif target_arg.lower() == "nonmedia": target_mode = "nonmedia"
+    if target.lower() == "all": target_mode = "all"
+    elif target.lower() == "nonmedia": target_mode = "nonmedia"
     else:
-        try: target_user = await commands.MemberConverter().convert(ctx, target_arg)
-        except: return await ctx.send("❌ Invalid target. Use `@user`, `nonmedia`, or `all`.", delete_after=5)
+        try: 
+             target_user = interaction.guild.get_member(int(re.sub(r'[^0-9]', '', target)))
+             if not target_user: raise ValueError
+        except: return await interaction.response.send_message("❌ Invalid target. Use `@user`, `nonmedia`, or `all`.", ephemeral=True)
 
-    # 2. Parse Scope / Limit
-    limit = None
-    channels = [ctx.channel]
-    
-    if scope_or_num:
-        if scope_or_num.isdigit():
-            limit = int(scope_or_num)
-        elif scope_or_num.lower() == "server":
-            channels = ctx.guild.text_channels
-        else:
-            try:
-                thing = await commands.GuildChannelConverter().convert(ctx, scope_or_num)
-                if isinstance(thing, discord.TextChannel): channels = [thing]
-                elif isinstance(thing, discord.CategoryChannel): channels = thing.text_channels
-            except: return await ctx.send("❌ Invalid scope or number.", delete_after=5)
+    # 2. Parse Scope
+    channels = [interaction.channel]
+    if scope:
+        if scope.lower() == "server": channels = interaction.guild.text_channels
+        # Simple ID lookup if provided
+        elif scope.isdigit():
+             c = interaction.guild.get_channel(int(scope))
+             if c: channels = [c]
 
     # 3. Confirmation
     display_target = target_user.mention if target_user else target_mode.upper()
     display_limit = str(limit) if limit else "ALL"
     display_scope = f"{len(channels)} Channel(s)"
     
-    confirm_msg = await ctx.send(
+    await interaction.response.send_message(
         f"⚠️ **CONFIRM PURGE**\n"
         f"🎯 Target: {display_target}\n"
         f"📂 Scope: {display_scope}\n"
         f"🔢 Limit: {display_limit} messages\n\n"
-        f"Type `yes` to confirm."
+        f"Type `yes` to confirm.",
+        ephemeral=False 
     )
     
-    def check(m): return m.author == ctx.author and m.channel == ctx.channel and m.content.lower() == "yes"
+    def check(m): return m.author == interaction.user and m.channel == interaction.channel and m.content.lower() == "yes"
     try: 
         resp = await bot.wait_for("message", check=check, timeout=30)
+        try: await resp.delete() 
+        except: pass
     except: 
-        await confirm_msg.delete()
-        return await ctx.send("❌ Timed out.", delete_after=5)
+        return await interaction.edit_original_response(content="❌ Timed out.")
 
-    # 4. Execution setup
-    # Delete interactions
-    try: await confirm_msg.delete()
-    except: pass
-    try: await resp.delete()
-    except: pass
-    try: await ctx.message.delete()
-    except: pass
-
-    status_msg = await ctx.send(f"🧹 Purging...")
+    # 4. Execution
+    await interaction.edit_original_response(content=f"🧹 Purging...")
     total = 0
     
     def check_msg(msg):
         if msg.pinned: return False
         if msg.channel.id in sticky_data and msg.id == sticky_data[msg.channel.id][1]: return False
-        if msg.id == status_msg.id: return False
         
         # Target Logic
         if target_user:
@@ -696,155 +860,223 @@ async def purge(ctx, target_arg: str, scope_or_num: str = None):
 
     for c in channels:
         try:
-            # If purging current channel, look before the status message to avoid deleting it 
-            # or counting it, and to effectively "skip" the deleted command messages
-            kwargs = {"limit": limit, "check": check_msg}
-            if c.id == ctx.channel.id:
-                kwargs["before"] = status_msg
-            
-            deleted = await c.purge(**kwargs)
+            deleted = await c.purge(limit=limit, check=check_msg)
             total += len(deleted)
         except Exception as e: 
             print(f"Purge error in {c.name}: {e}")
 
-    await status_msg.edit(content=f"✅ Deleted {total} messages.")
+    await interaction.edit_original_response(content=f"✅ Deleted {total} messages.")
     await asyncio.sleep(5)
-    try: await status_msg.delete()
-    except: pass
-    await send_log(f"🗑️ **Purge:** {ctx.author.name} deleted {total} messages ({target_mode}).")
+    await interaction.delete_original_response()
+    await send_log(f"🗑️ **Purge:** {interaction.user.name} deleted {total} messages ({target_mode}).")
 
-@bot.command()
-@is_admin()
-async def mediaonly(ctx, action: str, channel_id: str):
-    cid = clean_id(channel_id)
-    if action.lower() == "add":
+@bot.tree.command(name="mediaonly", description="Admin: Sets media-only channels.")
+@app_commands.check(is_admin_check)
+@app_commands.choices(action=[app_commands.Choice(name="Add", value="add"), app_commands.Choice(name="Remove", value="remove")])
+async def mediaonly(interaction: discord.Interaction, action: app_commands.Choice[str], channel: discord.TextChannel):
+    cid = channel.id
+    if action.value == "add":
         if cid not in config['media_only_channels']:
             config['media_only_channels'].append(cid)
             await save_config_to_db()
-            await ctx.send(f"✅ Channel <#{cid}> is now **Media Only**.")
-        else: await ctx.send("⚠️ Already in list.")
-    elif action.lower() == "remove":
+            await interaction.response.send_message(f"✅ Channel <#{cid}> is now **Media Only**.")
+        else: await interaction.response.send_message("⚠️ Already in list.", ephemeral=True)
+    elif action.value == "remove":
         if cid in config['media_only_channels']:
             config['media_only_channels'].remove(cid)
             await save_config_to_db()
-            await ctx.send(f"✅ Removed <#{cid}> from Media Only list.")
-        else: await ctx.send("⚠️ Not in list.")
+            await interaction.response.send_message(f"✅ Removed <#{cid}> from Media Only list.")
+        else: await interaction.response.send_message("⚠️ Not in list.", ephemeral=True)
 
-@bot.command()
-@is_admin()
-async def listmediaonly(ctx):
-    if not config['media_only_channels']: return await ctx.send("📂 No Media Only channels.")
+@bot.tree.command(name="listmediaonly", description="Admin: Lists media-only channels.")
+@app_commands.check(is_admin_check)
+async def listmediaonly(interaction: discord.Interaction):
+    if not config['media_only_channels']: return await interaction.response.send_message("📂 No Media Only channels.", ephemeral=True)
     text = "📷 **Media Only Channels:**\n" + " ".join([f"<#{c}>" for c in config['media_only_channels']])
-    await ctx.send(text)
+    await interaction.response.send_message(text)
 
-@bot.command()
-@is_admin()
-async def dmroles(ctx, r1: discord.Role, r2: discord.Role, r3: discord.Role):
+@bot.tree.command(name="dmroles", description="Admin: Sets the 3 DM roles.")
+@app_commands.check(is_admin_check)
+async def dmroles(interaction: discord.Interaction, r1: discord.Role, r2: discord.Role, r3: discord.Role):
     config['dm_roles'] = [r1.id, r2.id, r3.id]
     await save_config_to_db()
-    await ctx.send(f"✅ **DM Roles Set:**\n1. {r1.name}\n2. {r2.name}\n3. {r3.name}")
+    await interaction.response.send_message(f"✅ **DM Roles Set:**\n1. {r1.name}\n2. {r2.name}\n3. {r3.name}")
 
-@bot.command()
-@is_admin()
-async def dmreacts(ctx, e1: str, e2: str):
+@bot.tree.command(name="dmreacts", description="Admin: Sets the 2 DM reaction emojis.")
+@app_commands.check(is_admin_check)
+async def dmreacts(interaction: discord.Interaction, e1: str, e2: str):
     config['dm_reacts'] = [e1, e2]
     await save_config_to_db()
-    await ctx.send(f"✅ **DM Reacts Set:** {e1} (Accept) and {e2} (Deny)")
+    await interaction.response.send_message(f"✅ **DM Reacts Set:** {e1} (Accept) and {e2} (Deny)")
 
-@bot.command()
-@is_admin()
-async def setdmmessage(ctx, index: str, *, message: str):
-    if index not in ["0", "1", "2", "3", "4", "5"]: return await ctx.send("❌ Index must be 0-5.")
+@bot.tree.command(name="setdmmessage", description="Admin: Sets DM preset messages.")
+@app_commands.check(is_admin_check)
+async def setdmmessage(interaction: discord.Interaction, index: str, message: str):
+    if index not in ["0", "1", "2", "3", "4", "5"]: return await interaction.response.send_message("❌ Index must be 0-5.", ephemeral=True)
     config['dm_messages'][index] = message
     await save_config_to_db()
-    await ctx.send(f"✅ **Message {index} Updated.**")
+    await interaction.response.send_message(f"✅ **Message {index} Updated.**")
 
-@bot.command()
-@is_admin()
-async def listdmmessages(ctx):
+@bot.tree.command(name="listdmmessages", description="Admin: Lists all current DM preset messages.")
+@app_commands.check(is_admin_check)
+async def listdmmessages(interaction: discord.Interaction):
     text = "**📨 Current DM Messages:**\n"
     # Ensure order 0-5
     for i in range(6):
         key = str(i)
         if key in config['dm_messages']:
             text += f"**{key}:** {config['dm_messages'][key]}\n"
-    await ctx.send(text)
+    await interaction.response.send_message(text)
 
-@bot.command()
-@is_admin()
-async def dmreq(ctx, action: str, channel_id: str):
-    cid = clean_id(channel_id)
-    if action.lower() == "add":
+@bot.tree.command(name="dmreq", description="Admin: Sets DM request channels.")
+@app_commands.check(is_admin_check)
+@app_commands.choices(action=[app_commands.Choice(name="Add", value="add"), app_commands.Choice(name="Remove", value="remove")])
+async def dmreq(interaction: discord.Interaction, action: app_commands.Choice[str], channel: discord.TextChannel):
+    cid = channel.id
+    if action.value == "add":
         if cid not in config['dm_req_channels']:
             config['dm_req_channels'].append(cid)
             await save_config_to_db()
-            await ctx.send(f"✅ Channel <#{cid}> is now a **DM Request Channel**.")
-        else: await ctx.send("⚠️ Already in list.")
-    elif action.lower() == "remove":
+            await interaction.response.send_message(f"✅ Channel <#{cid}> is now a **DM Request Channel**.")
+        else: await interaction.response.send_message("⚠️ Already in list.", ephemeral=True)
+    elif action.value == "remove":
         if cid in config['dm_req_channels']:
             config['dm_req_channels'].remove(cid)
             await save_config_to_db()
-            await ctx.send(f"✅ Removed <#{cid}> from DM Request list.")
-        else: await ctx.send("⚠️ Not in list.")
+            await interaction.response.send_message(f"✅ Removed <#{cid}> from DM Request list.")
+        else: await interaction.response.send_message("⚠️ Not in list.", ephemeral=True)
 
-@bot.command()
-@is_admin()
-async def listdmreq(ctx):
+@bot.tree.command(name="listdmreq", description="Admin: Lists DM request settings.")
+@app_commands.check(is_admin_check)
+async def listdmreq(interaction: discord.Interaction):
     text = "**📨 DM Request Settings**\n"
     text += f"**Channels:** {' '.join([f'<#{c}>' for c in config['dm_req_channels']]) if config['dm_req_channels'] else 'None'}\n"
     text += f"**Roles:** <@&{config['dm_roles'][0]}>, <@&{config['dm_roles'][1]}>, <@&{config['dm_roles'][2]}>\n"
     text += f"**Reacts:** {config['dm_reacts'][0]} {config['dm_reacts'][1]}\n"
-    await ctx.send(text)
+    await interaction.response.send_message(text)
 
-@bot.command()
-@is_admin()
-async def vote(ctx, target_id: str):
-    try: await ctx.message.delete()
-    except: pass
-    user_id = clean_id(target_id)
+@bot.tree.command(name="vote", description="Admin: Registers a vote against a user.")
+@app_commands.check(is_admin_check)
+async def vote(interaction: discord.Interaction, target: discord.User):
+    user_id = target.id
     if user_id not in vote_data: vote_data[user_id] = []
-    if ctx.author.id in vote_data[user_id]: pass
-    vote_data[user_id].append(ctx.author.id)
+    if interaction.user.id in vote_data[user_id]: pass
+    vote_data[user_id].append(interaction.user.id)
     await db.save_vote(user_id, vote_data[user_id])
-    await send_log(f"🗳️ **VOTE:** <@{ctx.author.id}> voted for <@{user_id}>. (Total: {len(vote_data[user_id])})")
+    await send_log(f"🗳️ **VOTE:** <@{interaction.user.id}> voted for <@{user_id}>. (Total: {len(vote_data[user_id])})")
+    await interaction.response.send_message(f"✅ Voted for {target.mention}.", ephemeral=True)
     if len(vote_data[user_id]) >= 3:
-        guild = ctx.guild
+        guild = interaction.guild
         member = guild.get_member(user_id)
         if member:
             try: await member.kick(reason="Received 3 votes from admins."); await send_log(f"🦶 **KICKED:** <@{user_id}>.")
             except: pass
 
-@bot.command()
-@is_admin()
-async def removevotes(ctx, target_id: str):
-    user_id = clean_id(target_id)
+@bot.tree.command(name="removevotes", description="Admin: Removes the most recent vote.")
+@app_commands.check(is_admin_check)
+async def removevotes(interaction: discord.Interaction, target: discord.User):
+    user_id = target.id
     if user_id in vote_data and vote_data[user_id]:
         removed = vote_data[user_id].pop()
         await db.save_vote(user_id, vote_data[user_id])
-        await ctx.send(f"✅ Removed one vote from <@{user_id}>.")
-    else: await ctx.send(f"❌ No votes found.")
+        await interaction.response.send_message(f"✅ Removed one vote from <@{user_id}>.")
+    else: await interaction.response.send_message(f"❌ No votes found.", ephemeral=True)
 
-@bot.command()
-@is_admin()
-async def showvotes(ctx):
-    if not vote_data: return await ctx.send("📝 No active votes.")
+@bot.tree.command(name="showvotes", description="Admin: Lists all active votes.")
+@app_commands.check(is_admin_check)
+async def showvotes(interaction: discord.Interaction):
+    if not vote_data: return await interaction.response.send_message("📝 No active votes.", ephemeral=True)
     text = "**Current Votes:**\n"
     for uid, voters in vote_data.items():
         if len(voters) > 0:
             voter_list = ", ".join([f"<@{v}>" for v in voters])
             text += f"• <@{uid}>: {len(voters)} votes ({voter_list})\n"
-    await ctx.send(text)
+    await interaction.response.send_message(text)
 
-@bot.command()
-async def help(ctx):
+# --- BETTER BUGGY COMMANDS ---
+
+@bot.tree.command(name="setsleepvc", description="Admin: Sets the Sleep Voice Channel.")
+@app_commands.check(is_admin_check)
+async def setsleepvc(interaction: discord.Interaction, channel: discord.VoiceChannel):
+    config['sleep_vc_id'] = channel.id
+    await save_config_to_db()
+    await interaction.response.send_message(f"✅ Sleep VC set to {channel.name}.")
+
+@bot.tree.command(name="setcelebration", description="Admin: Sets task completion messages (Levels 1-4).")
+@app_commands.check(is_admin_check)
+@app_commands.choices(level=[
+    app_commands.Choice(name="Level 1 (0-24%)", value="1"),
+    app_commands.Choice(name="Level 2 (25-49%)", value="2"),
+    app_commands.Choice(name="Level 3 (50-74%)", value="3"),
+    app_commands.Choice(name="Level 4 (75-100%)", value="4")
+])
+async def setcelebration(interaction: discord.Interaction, level: app_commands.Choice[str], message: str):
+    config['celebratory_messages'][level.value] = message
+    await save_config_to_db()
+    await interaction.response.send_message(f"✅ Celebration Level {level.value} updated.")
+
+@bot.tree.command(name="sleep", description="Move yourself (or someone else, if Admin) to the Sleep VC.")
+@app_commands.describe(target="User to move (Admin only)")
+async def sleep(interaction: discord.Interaction, target: typing.Optional[discord.Member] = None):
+    # Determine who to move
+    member_to_move = interaction.user
+    if target:
+        # Check if caller is admin
+        if interaction.user.guild_permissions.administrator or any(role.id in config['admin_role_id'] for role in interaction.user.roles):
+            member_to_move = target
+        else:
+            return await interaction.response.send_message("🚫 **Access Denied:** Only Admins can move others!", ephemeral=True)
+
+    # Check config
+    if not config['sleep_vc_id']:
+        return await interaction.response.send_message("❌ Sleep VC has not been set yet!", ephemeral=True)
+
+    # Check voice state
+    if not member_to_move.voice:
+        return await interaction.response.send_message(f"❌ {member_to_move.display_name} is not in a voice channel!", ephemeral=True)
+
+    sleep_channel = interaction.guild.get_channel(config['sleep_vc_id'])
+    if not sleep_channel:
+        return await interaction.response.send_message("❌ Sleep VC channel not found (ID might be wrong).", ephemeral=True)
+
+    try:
+        await member_to_move.move_to(sleep_channel)
+        await interaction.response.send_message(f"💤 Moved {member_to_move.mention} to sleep.")
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ I don't have permission to move members!", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to move user: {e}", ephemeral=True)
+
+@bot.tree.command(name="task", description="Start a new task list.")
+@app_commands.describe(amount="Number of tasks (1-100)")
+async def task(interaction: discord.Interaction, amount: int):
+    if amount < 1 or amount > 100:
+        return await interaction.response.send_message("Please choose a number between 1 and 100, buggy!", ephemeral=True)
+
+    existing = await db.find_task_by_user(interaction.user.id)
+    if existing:
+        return await interaction.response.send_message("You already have an active list! Please close it first.", ephemeral=True)
+
+    view = TaskView(user_id=interaction.user.id, total=amount)
+    await interaction.response.send_message(f"<@{interaction.user.id}>'s tasks: 0/{amount}\n{view.get_emoji_bar()}", view=view)
+    
+    # We need the message object to save the ID
+    msg = await interaction.original_response()
+    view.message_id = msg.id
+    await view.update_db()
+
+@bot.tree.command(name="help", description="Shows the help menu.")
+async def help(interaction: discord.Interaction):
     embed = discord.Embed(title="BuggyBot Help", color=discord.Color.blue())
-    embed.add_field(name="⚙️ Settings", value="`!setsetting`, `!addsetting`, `!removesetting`, `!showsettings`", inline=False)
-    embed.add_field(name="📌 Sticky", value="`!stick`, `!unstick`, `!liststickies`", inline=False)
-    embed.add_field(name="🧹 Purge", value="`!purge <user/nonmedia/all> <limit/scope>`", inline=False)
-    embed.add_field(name="📷 Media Only", value="`!mediaonly`, `!listmediaonly`", inline=False)
-    embed.add_field(name="📨 DM Requests", value="`!dmreq`, `!dmroles`, `!setdmmessage`, `!listdmmessages`, `!listdmreq`", inline=False)
-    embed.add_field(name="♻️ System", value="`!sync`", inline=False)
-    await ctx.send(embed=embed)
+    embed.add_field(name="⚙️ Settings", value="`/setsetting`, `/addsetting`, `/removesetting`, `/showsettings`", inline=False)
+    embed.add_field(name="📌 Sticky", value="`/stick`, `/unstick`, `/liststickies`", inline=False)
+    embed.add_field(name="🧹 Purge", value="`/purge <user/nonmedia/all> <limit>`", inline=False)
+    embed.add_field(name="📷 Media Only", value="`/mediaonly`, `/listmediaonly`", inline=False)
+    embed.add_field(name="📨 DM Requests", value="`/dmreq`, `/dmroles`, `/setdmmessage`, `/listdmmessages`, `/listdmreq`", inline=False)
+    embed.add_field(name="📝 Tasks & Sleep", value="`/task <amount>`, `/sleep [user]`\n`/setsleepvc`, `/setcelebration`", inline=False)
+    embed.add_field(name="👑 Admin", value="`/vote`, `/removevotes`, `/showvotes`\n`/checkyoutube`, `/refreshyoutube`, `/entercode`", inline=False)
+    embed.add_field(name="♻️ System", value="`/sync`", inline=False)
+    await interaction.response.send_message(embed=embed)
 
 @bot.event
 async def on_message(message):
@@ -865,23 +1097,18 @@ async def on_message(message):
             is_media = message.attachments or message.embeds or "http" in message.content
             
             if is_media:
-                # User posted media, grant them 5 minutes of chat text
                 media_cooldowns[(message.author.id, message.channel.id)] = datetime.datetime.utcnow().timestamp()
             else:
-                # User posted text only. Check if they have "credit"
                 last_time = media_cooldowns.get((message.author.id, message.channel.id), 0)
-                if datetime.datetime.utcnow().timestamp() - last_time > 300: # 300 seconds = 5 mins
+                if datetime.datetime.utcnow().timestamp() - last_time > 300: # 5 mins
                     try: await message.delete()
                     except: pass
                     return
-                # If we get here, they are within the 5 minute window, so we allow it.
 
     # --- 2. DM REQUEST CHANNELS ---
     if message.channel.id in config['dm_req_channels']:
         
         # 1. STRICT PARSING
-        # We strictly check if the message starts with <@ID> ... 
-        # This regex ensures it is a typed mention and NOT a reply.
         cleaned_content = message.content.strip()
         match = re.match(r'^<@!?(\d+)>\s+(.+)', cleaned_content, re.DOTALL)
         
@@ -897,7 +1124,6 @@ async def on_message(message):
         # 2. ENFORCE RESTRICTIONS (Delete if bad)
         if not is_admin_user:
             if not valid_request:
-                # If they didn't follow the format (or just replied), delete it.
                 try:
                     await message.delete()
                     raw_msg = config['dm_messages'].get("0", "Error: No text.")
@@ -906,33 +1132,24 @@ async def on_message(message):
                 except: pass
                 return
         
-        # 3. FEATURE LOGIC (Only run if it IS a valid request format)
-        # Even admins need to use the format if they want the bot to react/send DM msgs.
-        # If admin types random text, it won't be deleted, but it won't trigger this either.
+        # 3. FEATURE LOGIC
         if valid_request and target_member:
             target = target_member
-            # Check Roles
             has_role_1 = any(r.id == config['dm_roles'][0] for r in target.roles)
             has_role_2 = any(r.id == config['dm_roles'][1] for r in target.roles)
             has_role_3 = any(r.id == config['dm_roles'][2] for r in target.roles)
             
             raw_msg = ""
             if has_role_1:
-                # Bot reacts with the 2 emojis
                 try:
                     for e in config['dm_reacts']: await message.add_reaction(e)
                 except: pass
             
             elif has_role_2:
-                # Send Message 3
                 raw_msg = config['dm_messages'].get("3", "")
-                
             elif has_role_3:
-                # Send Message 4
                 raw_msg = config['dm_messages'].get("4", "")
-            
             else:
-                # No Roles - Use Message 5
                 raw_msg = config['dm_messages'].get("5", "")
             
             if raw_msg:
@@ -942,7 +1159,7 @@ async def on_message(message):
                                        .replace("{requested_nickname}", target.display_name)
                 await message.channel.send(formatted_msg)
 
-    # --- FIXED STICKY MESSAGES ---
+    # --- 3. FIXED STICKY MESSAGES ---
     if message.channel.id in sticky_data:
         content, last_id, last_time = sticky_data[message.channel.id]
         if isinstance(last_time, datetime.datetime): last_time = last_time.timestamp()
@@ -960,24 +1177,40 @@ async def on_message(message):
                 await db.save_sticky(message.channel.id, content, new_msg.id, sticky_data[message.channel.id][2])
             except: pass
             
-    # --- MUSIC LINKS ---
+    # --- 4. MUSIC LINKS ---
     if config['music_channel_id'] != 0 and message.channel.id == config['music_channel_id']:
+        # Spotify Logic
         if "spotify.com" in message.content.lower():
              success = await process_spotify_link(message.content)
-             if success: await message.add_reaction("🎵")
+             if success: 
+                 await message.add_reaction("🎵")
+             else:
+                 # It failed - Ping Admins
+                 roles = [f"<@&{rid}>" for rid in config['admin_role_id']]
+                 ping_str = " ".join(roles) if roles else "Admins"
+                 await message.channel.send(f"⚠️ {ping_str} **Error:** Spotify link from {message.author.mention} could not be processed.\nLink: <{message.content}>")
+        
+        # YouTube Logic
         elif youtube:
             v_id = None
             if "v=" in message.content: v_id = message.content.split("v=")[1].split("&")[0]
             elif "youtu.be/" in message.content: v_id = message.content.split("youtu.be/")[1].split("?")[0]
+            
             if v_id:
-                try: youtube.playlistItems().insert(part="snippet", body={"snippet": {"playlistId": config['playlist_id'], "resourceId": {"kind": "youtube#video", "videoId": v_id}}}).execute(); await message.add_reaction("🎵")
-                except: pass
-    
-    await bot.process_commands(message)
+                try: 
+                    youtube.playlistItems().insert(part="snippet", body={"snippet": {"playlistId": config['playlist_id'], "resourceId": {"kind": "youtube#video", "videoId": v_id}}}).execute()
+                    await message.add_reaction("🎵")
+                except Exception as e:
+                     # It failed - Ping Admins
+                     roles = [f"<@&{rid}>" for rid in config['admin_role_id']]
+                     ping_str = " ".join(roles) if roles else "Admins"
+                     await message.channel.send(f"⚠️ {ping_str} **Error:** YouTube link from {message.author.mention} failed.\nError: `{e}`")
 
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, (commands.CommandNotFound, commands.CheckFailure)): return
-    await ctx.send(f"⚠️ **Error:** `{error}`")
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CheckFailure):
+        await interaction.response.send_message("🚫 **Access Denied:** You need to be an Admin to use this command!", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"⚠️ **Error:** `{error}`", ephemeral=True)
 
 bot.run(TOKEN)
