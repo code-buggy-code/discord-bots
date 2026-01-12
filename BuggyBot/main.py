@@ -428,10 +428,15 @@ def load_music_services():
         print("❌ browser.json not found.")
 
 async def process_spotify_link(url):
-    if not spotify: return "Spotify service not loaded (Check ID/Secret)."
-    if not ytmusic: return "YouTube Music service not loaded (browser.json missing)."
-    if not youtube: return "YouTube API not loaded (License invalid)."
-    if not config['playlist_id']: return "Playlist ID not set in config."
+    # Expanded error reporting
+    errors = []
+    if not spotify: errors.append("Spotify service not loaded (Check ID/Secret).")
+    if not ytmusic: errors.append("YouTube Music service not loaded (browser.json missing/invalid).")
+    if not youtube: errors.append("YouTube API not loaded (License invalid).")
+    if not config['playlist_id']: errors.append("Playlist ID not set in config.")
+    
+    if errors:
+        return "Setup Errors:\n" + "\n".join([f"- {e}" for e in errors])
 
     match = re.search(r'(https?://[^\s]+)', url)
     clean_url = match.group(0) if match else url
@@ -1458,17 +1463,21 @@ async def on_message(message):
         content, last_id, last_time = sticky_data[message.channel.id]
         if isinstance(last_time, datetime.datetime): last_time = last_time.timestamp()
         
+        # Check if enough time has passed AND if the last message wasn't the sticky itself
         if datetime.datetime.utcnow().timestamp() - last_time > config['sticky_delay_seconds']:
+            # Find the most recent message in the channel
             try:
-                if last_id:
-                    try: 
-                        m = await message.channel.fetch_message(last_id)
-                        await m.delete()
-                    except: pass
-                new_msg = await message.channel.send(content)
-                sticky_data[message.channel.id][1] = new_msg.id
-                sticky_data[message.channel.id][2] = datetime.datetime.utcnow().timestamp()
-                await db.save_sticky(message.channel.id, content, new_msg.id, sticky_data[message.channel.id][2])
+                last_msg_in_channel = [msg async for msg in message.channel.history(limit=1)][0]
+                if last_msg_in_channel.author != bot.user: # Only resend if last msg wasn't me
+                    if last_id:
+                        try: 
+                            m = await message.channel.fetch_message(last_id)
+                            await m.delete()
+                        except: pass
+                    new_msg = await message.channel.send(content)
+                    sticky_data[message.channel.id][1] = new_msg.id
+                    sticky_data[message.channel.id][2] = datetime.datetime.utcnow().timestamp()
+                    await db.save_sticky(message.channel.id, content, new_msg.id, sticky_data[message.channel.id][2])
             except: pass
             
     # --- 4. MUSIC LINKS ---
