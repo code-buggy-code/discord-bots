@@ -985,53 +985,47 @@ async def setupmusic(interaction: discord.Interaction, headers: str):
         # Create browser.json with the provided headers
         browser_json_path = os.path.join(BASE_DIR, 'browser.json')
         
-        # ytmusicapi expects a JSON object, but the user provides a raw header string.
-        # We'll use the YTMusic.setup function if possible, or construct it manually.
-        # Since we can't easily run the interactive setup, we'll try to construct the JSON manually
-        # assuming the user provides the raw header string as requested by ytmusicapi docs.
+        # Try to parse the raw headers into a dictionary
+        header_dict = {}
         
-        # Simple parsing to create a valid JSON structure for browser.json
-        # This is a basic implementation; robust parsing might need the library's help
-        # But for automation, we can just save it if it's already JSON, or wrap it.
+        # 1. Split into lines
+        lines = headers.split('\n')
         
-        # However, ytmusicapi usually takes the headers and creates the file.
-        # Let's try to use the library's method if available, or write the file directly.
-        # The most reliable way without user interaction is to write the file directly if we know the format.
-        # browser.json is essentially just the headers in JSON format.
-        
-        # If the user provides a JSON string (which is what ytmusicapi usually outputs/expects for the file)
-        try:
-            json_data = json.loads(headers)
+        # 2. Iterate and parse
+        for line in lines:
+            line = line.strip()
+            if not line: continue
+            
+            # Skip HTTP request lines (like GET /verify_session HTTP/2)
+            if line.startswith(("GET", "POST", "HTTP", ":method", ":path", ":scheme", ":authority")):
+                continue
+
+            # Split by first colon
+            if ':' in line:
+                key, value = line.split(':', 1)
+                header_dict[key.strip()] = value.strip()
+
+        if not header_dict:
+             # Fallback: maybe they pasted a JSON string?
+             try:
+                 header_dict = json.loads(headers)
+             except:
+                 return await interaction.response.send_message("❌ Error: Could not parse headers. Please paste the raw `Key: Value` lines.", ephemeral=True)
+
+        # 3. Save as JSON
+        if header_dict:
             with open(browser_json_path, 'w') as f:
-                json.dump(json_data, f)
-        except json.JSONDecodeError:
-            # If it's not JSON, it might be the raw header string.
-            # We can try to use YTMusic.setup logic, but that's interactive.
-            # For now, let's assume the user is pasting the JSON content for browser.json
+                json.dump(header_dict, f, indent=4)
             
-            # --- START EDIT ---
-            # Try to convert raw header string to JSON dictionary
-            header_dict = {}
-            for line in headers.split('\n'):
-                if ':' in line:
-                    key, value = line.split(':', 1)
-                    header_dict[key.strip()] = value.strip()
+            # Reload services
+            load_music_services()
             
-            if header_dict:
-                # If successfully parsed headers, save as JSON
-                with open(browser_json_path, 'w') as f:
-                    json.dump(header_dict, f)
+            if ytmusic:
+                await interaction.response.send_message(f"✅ **Success!** Parsed {len(header_dict)} headers. `browser.json` created and Music service loaded.", ephemeral=True)
             else:
-                return await interaction.response.send_message("❌ Error: Please provide the headers in valid JSON format (the content of browser.json) or as a raw header block.", ephemeral=True)
-            # --- END EDIT ---
-            
-        # Reload services
-        load_music_services()
-        
-        if ytmusic:
-            await interaction.response.send_message("✅ **Success!** `browser.json` created and YouTube Music service loaded.", ephemeral=True)
+                await interaction.response.send_message("⚠️ `browser.json` created, but service failed to load. Check console for details.", ephemeral=True)
         else:
-            await interaction.response.send_message("⚠️ `browser.json` created, but service failed to load. Check the format.", ephemeral=True)
+             await interaction.response.send_message("❌ Error: No valid headers found in your input.", ephemeral=True)
             
     except Exception as e:
         await interaction.response.send_message(f"❌ Setup Error: {e}", ephemeral=True)
