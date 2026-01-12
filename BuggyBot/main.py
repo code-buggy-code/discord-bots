@@ -1214,7 +1214,7 @@ async def dmreq(interaction: discord.Interaction, action: app_commands.Choice[st
         if cid not in config['dm_req_channels']:
             config['dm_req_channels'].append(cid)
             await save_config_to_db()
-            await interaction.response.send_message(f"✅ Channel <#{cid}> is now a **DM Request Channel**.")
+            await interaction.response.send_message(f"✅ Channel <#{cid}> is a DM Request Channel.")
         else: await interaction.response.send_message("⚠️ Already in list.", ephemeral=True)
     elif action.value == "remove":
         if cid in config['dm_req_channels']:
