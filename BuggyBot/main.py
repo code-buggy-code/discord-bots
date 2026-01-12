@@ -1306,7 +1306,7 @@ async def sleep(interaction: discord.Interaction, target: typing.Optional[discor
 
     # Check config
     if not config['sleep_vc_id']:
-        return await interaction.response.send_message("❌ Sleep VC has not been set yet!", ephemeral=True)
+        return await interaction.response.send_message(f"❌ Sleep VC has not been set yet!", ephemeral=True)
 
     # Check voice state
     if not member_to_move.voice:
