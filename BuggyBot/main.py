@@ -818,6 +818,28 @@ async def on_voice_state_update(member, before, after):
 
 # --- SLASH COMMANDS ---
 
+# --- AUTOCOMPLETE FUNCTIONS ---
+async def settings_key_autocomplete(interaction: discord.Interaction, current: str) -> typing.List[app_commands.Choice[str]]:
+    keys = list(SIMPLE_SETTINGS.keys())
+    return [
+        app_commands.Choice(name=key, value=key)
+        for key in keys if current.lower() in key.lower()
+    ][:25] # Limit to 25 choices
+
+async def list_settings_key_autocomplete(interaction: discord.Interaction, current: str) -> typing.List[app_commands.Choice[str]]:
+    keys = [k for k, v in SIMPLE_SETTINGS.items() if v == list]
+    return [
+        app_commands.Choice(name=key, value=key)
+        for key in keys if current.lower() in key.lower()
+    ][:25]
+
+async def dm_message_index_autocomplete(interaction: discord.Interaction, current: str) -> typing.List[app_commands.Choice[str]]:
+    indices = ["0", "1", "2", "3", "4", "5"]
+    return [
+        app_commands.Choice(name=index, value=index)
+        for index in indices if current in index
+    ]
+
 @bot.tree.command(name="sync", description="Admin: Pulls changes from GitHub and restarts.")
 @app_commands.check(is_admin_check)
 async def sync(interaction: discord.Interaction):
@@ -834,6 +856,7 @@ async def checkyoutube(interaction: discord.Interaction):
 
 @bot.tree.command(name="setsetting", description="Admin: Sets a config value.")
 @app_commands.check(is_admin_check)
+@app_commands.autocomplete(key=settings_key_autocomplete)
 async def setsetting(interaction: discord.Interaction, key: str, value: str):
     key = key.lower()
     if key not in SIMPLE_SETTINGS: return await interaction.response.send_message(f"❌ Invalid key.", ephemeral=True)
@@ -848,6 +871,7 @@ async def setsetting(interaction: discord.Interaction, key: str, value: str):
 
 @bot.tree.command(name="addsetting", description="Admin: Adds items to a list config.")
 @app_commands.check(is_admin_check)
+@app_commands.autocomplete(key=list_settings_key_autocomplete)
 async def addsetting(interaction: discord.Interaction, key: str, value: str):
     key = key.lower()
     if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await interaction.response.send_message("❌ Not a list! Use `/setsetting`.", ephemeral=True)
@@ -862,6 +886,7 @@ async def addsetting(interaction: discord.Interaction, key: str, value: str):
 
 @bot.tree.command(name="removesetting", description="Admin: Removes items from a list config.")
 @app_commands.check(is_admin_check)
+@app_commands.autocomplete(key=list_settings_key_autocomplete)
 async def removesetting(interaction: discord.Interaction, key: str, value: str):
     key = key.lower()
     if key not in SIMPLE_SETTINGS or SIMPLE_SETTINGS[key] != list: return await interaction.response.send_message("❌ Not a list!", ephemeral=True)
@@ -1057,6 +1082,7 @@ async def dmreacts(interaction: discord.Interaction, e1: str, e2: str):
 
 @bot.tree.command(name="setdmmessage", description="Admin: Sets DM preset messages.")
 @app_commands.check(is_admin_check)
+@app_commands.autocomplete(index=dm_message_index_autocomplete)
 async def setdmmessage(interaction: discord.Interaction, index: str, message: str):
     if index not in ["0", "1", "2", "3", "4", "5"]: return await interaction.response.send_message("❌ Index must be 0-5.", ephemeral=True)
     config['dm_messages'][index] = message
