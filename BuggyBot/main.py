@@ -1008,7 +1008,22 @@ async def setupmusic(interaction: discord.Interaction, headers: str):
             # If it's not JSON, it might be the raw header string.
             # We can try to use YTMusic.setup logic, but that's interactive.
             # For now, let's assume the user is pasting the JSON content for browser.json
-            return await interaction.response.send_message("❌ Error: Please provide the headers in valid JSON format (the content of browser.json).", ephemeral=True)
+            
+            # --- START EDIT ---
+            # Try to convert raw header string to JSON dictionary
+            header_dict = {}
+            for line in headers.split('\n'):
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    header_dict[key.strip()] = value.strip()
+            
+            if header_dict:
+                # If successfully parsed headers, save as JSON
+                with open(browser_json_path, 'w') as f:
+                    json.dump(header_dict, f)
+            else:
+                return await interaction.response.send_message("❌ Error: Please provide the headers in valid JSON format (the content of browser.json) or as a raw header block.", ephemeral=True)
+            # --- END EDIT ---
             
         # Reload services
         load_music_services()
