@@ -12,7 +12,7 @@
 - send_log(text): Sends a message to the log channel.
 - check_manager_logs(): Loop that checks for logs from other processes (IPC).
 - nightly_purge(): task that deletes messages in specific channels at 3 AM.
-- check_token_validity_task(): Daily task to verify YouTube license.
+- check_token_validity_task(): Daily task to verify YouTube license and Music tokens.
 - task_loop(): (New) Robust minute-by-minute timer for nightly tasks AND lockout checks.
 - handle_sleep_command(message, target_member): Moves users to Sleep VC.
 - is_time_in_range(start, end, current): Helper for lockout time checking.
@@ -37,12 +37,12 @@
 
 --- SLASH COMMANDS ---
 - /sync: Updates code from GitHub and restarts.
-- /checkyoutube: Checks if YouTube API token is valid.
+- /checkmusic: (Updated) Checks if YouTube API and YTM tokens are valid.
 - /setsetting <key> <value>: Sets a config value.
 - /addsetting <key> <value>: Adds items to a list config.
 - /removesetting <key> <value>: Removes items from a list config.
 - /showsettings: Shows all current config values.
-- /refreshyoutube: Starts the OAuth flow to renew YouTube license.
+- /refreshmusic: (Updated) Starts OAuth flow for YouTube & reloads YTM browser.json.
 - /entercode <code>: Completes the YouTube renewal with the code.
 - /stick <text>: Creates a sticky message in the current channel.
 - /unstick: Removes the sticky message in the current channel.
@@ -631,8 +631,11 @@ async def nightly_purge():
 
 async def check_token_validity_task():
     await load_youtube_service() 
-    if youtube: await send_log("📅 **Daily Check:** YouTube License is Active & Valid.")
-    else: await send_log("❌ **Daily Check:** YouTube License is EXPIRED or BROKEN.")
+    # Check YTM separately for the report
+    ytm_status = "✅ YouTube Music: Ready" if ytmusic else "❌ YouTube Music: Not Loaded (Check browser.json)"
+    
+    if youtube: await send_log(f"📅 **Daily Check:** YouTube License is Active & Valid.\n{ytm_status}")
+    else: await send_log(f"❌ **Daily Check:** YouTube License is EXPIRED or BROKEN.\n{ytm_status}")
 
 # New Robust Task Loop
 @tasks.loop(minutes=1)
@@ -887,12 +890,14 @@ async def sync(interaction: discord.Interaction):
     os.system("git pull")
     os.system("pkill -f main.py") 
 
-@bot.tree.command(name="checkyoutube", description="Admin: Checks if YouTube API token is valid.")
+@bot.tree.command(name="checkmusic", description="Admin: Checks if YouTube API and YTM tokens are valid.")
 @app_commands.check(is_admin_check)
-async def checkyoutube(interaction: discord.Interaction):
-    is_valid = await load_youtube_service() 
-    if is_valid: await interaction.response.send_message(f"✅ **License Valid!**")
-    else: await interaction.response.send_message("❌ **License Broken.**")
+async def checkmusic(interaction: discord.Interaction):
+    is_valid = await load_youtube_service()
+    yt_msg = f"✅ **YouTube License Valid!**" if is_valid else "❌ **YouTube License Broken.**"
+    ytm_msg = "✅ **YouTube Music Ready!**" if ytmusic else "❌ **YouTube Music Not Loaded (Check browser.json).**"
+    
+    await interaction.response.send_message(f"{yt_msg}\n{ytm_msg}")
 
 @bot.tree.command(name="setsetting", description="Admin: Sets a config value.")
 @app_commands.check(is_admin_check)
@@ -953,23 +958,29 @@ async def showsettings(interaction: discord.Interaction):
             text += f"**{k}**: {disp}\n"
     await interaction.response.send_message(text[:2000], allowed_mentions=discord.AllowedMentions.none()) # Added allowed_mentions=discord.AllowedMentions.none()
 
-@bot.tree.command(name="refreshyoutube", description="Admin: Starts the OAuth flow to renew YouTube license.")
+@bot.tree.command(name="refreshmusic", description="Admin: Starts the OAuth flow to renew YouTube license & reloads YTM browser.json.")
 @app_commands.check(is_admin_check)
-async def refreshyoutube(interaction: discord.Interaction):
+async def refreshmusic(interaction: discord.Interaction):
+    # 1. Reload YTM (browser.json check)
+    load_music_services()
+    ytm_status = "✅ **YouTube Music (browser.json) reloaded!**" if ytmusic else "❌ **YouTube Music (browser.json) NOT found!**"
+
+    # 2. Start YouTube OAuth Flow
     global auth_flow
     secret_path = os.path.join(BASE_DIR, 'client_secret.json')
-    if not os.path.exists(secret_path): return await interaction.response.send_message("❌ Missing `client_secret.json`!", ephemeral=True)
+    if not os.path.exists(secret_path): 
+        return await interaction.response.send_message(f"{ytm_status}\n❌ Missing `client_secret.json`! Cannot refresh YouTube API.", ephemeral=True)
     try:
         auth_flow = Flow.from_client_secrets_file(secret_path, scopes=['https://www.googleapis.com/auth/youtube'], redirect_uri='urn:ietf:wg:oauth:2.0:oob')
         auth_url, _ = auth_flow.authorization_url(prompt='consent')
-        await interaction.response.send_message(f"🔄 **Renewal Started!**\n1. Click: <{auth_url}>\n2. Type: `/entercode <code>`")
-    except Exception as e: await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+        await interaction.response.send_message(f"{ytm_status}\n🔄 **YouTube API Renewal Started!**\n1. Click: <{auth_url}>\n2. Type: `/entercode <code>`")
+    except Exception as e: await interaction.response.send_message(f"{ytm_status}\n❌ Error starting YouTube refresh: {e}", ephemeral=True)
 
 @bot.tree.command(name="entercode", description="Admin: Completes the YouTube renewal with the code.")
 @app_commands.check(is_admin_check)
 async def entercode(interaction: discord.Interaction, code: str):
     global auth_flow
-    if not auth_flow: return await interaction.response.send_message("❌ Run `/refreshyoutube` first!", ephemeral=True)
+    if not auth_flow: return await interaction.response.send_message("❌ Run `/refreshmusic` first!", ephemeral=True)
     try:
         auth_flow.fetch_token(code=code)
         config['youtube_token_json'] = auth_flow.credentials.to_json()
@@ -1373,7 +1384,7 @@ async def help(interaction: discord.Interaction):
     embed.add_field(name="📨 DM Requests", value="`/dmreq`, `/dmroles`, `/setdmmessage`, `/listdmmessages`, `/listdmreq`", inline=False)
     embed.add_field(name="📝 Tasks & Sleep", value="`/task <amount>`, `/sleep [user]`\n`/setsleepvc`, `/setcelebration`", inline=False)
     embed.add_field(name="⛔ Lockout & Jail", value="`/lockout`, `/lockoutview`, `/lockoutclear`\n`/setjail`, `/timeout`", inline=False)
-    embed.add_field(name="👑 Admin", value="`/vote`, `/removevotes`, `/showvotes`, `/adminclear`\n`/checkyoutube`, `/refreshyoutube`, `/entercode`", inline=False)
+    embed.add_field(name="👑 Admin", value="`/vote`, `/removevotes`, `/showvotes`, `/adminclear`\n`/checkmusic`, `/refreshmusic`, `/entercode`", inline=False)
     embed.add_field(name="♻️ System", value="`/sync`", inline=False)
     await interaction.response.send_message(embed=embed)
 
