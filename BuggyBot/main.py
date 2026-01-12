@@ -405,33 +405,62 @@ async def load_youtube_service():
 
 def load_music_services():
     global ytmusic, spotify
-    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET: return
+    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET: 
+        print("⚠️ Spotify Client ID or Secret missing in secret_bot.py")
+        return
     try:
         sp_auth = SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET)
         spotify = Spotify(auth_manager=sp_auth)
-    except: pass
+        print("✅ Spotify Service Loaded.")
+    except Exception as e: 
+        print(f"❌ Failed to load Spotify: {e}")
+        pass
+    
     browser_path = os.path.join(BASE_DIR, 'browser.json')
     try:
         if os.path.exists(browser_path): ytmusic = YTMusic(browser_path)
     except: pass
 
 async def process_spotify_link(url):
-    if not spotify or not ytmusic or not youtube or not config['playlist_id']: return False
+    if not spotify: return "Spotify service not loaded (Check ID/Secret)."
+    if not ytmusic: return "YouTube Music service not loaded (browser.json missing)."
+    if not youtube: return "YouTube API not loaded (License invalid)."
+    if not config['playlist_id']: return "Playlist ID not set in config."
+
     match = re.search(r'(https?://[^\s]+)', url)
     clean_url = match.group(0) if match else url
     loop = asyncio.get_running_loop()
+    
     try:
-        track = await loop.run_in_executor(None, spotify.track, clean_url)
+        # Get Track Info
+        try:
+            track = await loop.run_in_executor(None, spotify.track, clean_url)
+        except Exception as e:
+            return f"Spotify Error: Invalid link or API issue ({e})"
+
         search_query = f"{track['artists'][0]['name']} - {track['name']}"
-        search_results = await loop.run_in_executor(None, lambda: ytmusic.search(search_query, "songs"))
-        if not search_results: return False
-        req = youtube.playlistItems().insert(
-            part="snippet", 
-            body={"snippet": {"playlistId": config['playlist_id'], "resourceId": {"kind": "youtube#video", "videoId": search_results[0]['videoId']}}}
-        )
-        await loop.run_in_executor(None, req.execute)
-        return True
-    except: return False
+        
+        # Search YTM
+        try:
+            search_results = await loop.run_in_executor(None, lambda: ytmusic.search(search_query, "songs"))
+        except Exception as e:
+            return f"YTM Search Error: {e}"
+
+        if not search_results: return f"Could not find '{search_query}' on YouTube Music."
+        
+        # Add to Playlist
+        try:
+            req = youtube.playlistItems().insert(
+                part="snippet", 
+                body={"snippet": {"playlistId": config['playlist_id'], "resourceId": {"kind": "youtube#video", "videoId": search_results[0]['videoId']}}}
+            )
+            await loop.run_in_executor(None, req.execute)
+            return True # Success
+        except Exception as e:
+            return f"YouTube API Error (Insert failed): {e}"
+
+    except Exception as e: 
+        return f"Unknown Error: {e}"
 
 # --- TASK UI CLASS (BETTER BUGGY) ---
 class TaskView(discord.ui.View):
@@ -1440,14 +1469,14 @@ async def on_message(message):
     if config['music_channel_id'] != 0 and message.channel.id == config['music_channel_id']:
         # Spotify Logic
         if "spotify.com" in message.content.lower():
-             success = await process_spotify_link(message.content)
-             if success: 
+             success_msg = await process_spotify_link(message.content)
+             if success_msg is True: 
                  await message.add_reaction("🎵")
              else:
                  # It failed - Ping Admins
                  roles = [f"<@&{rid}>" for rid in config['admin_role_id']]
                  ping_str = " ".join(roles) if roles else "Admins"
-                 await message.channel.send(f"⚠️ {ping_str} **Error:** Spotify link from {message.author.mention} could not be processed.\nLink: <{message.content}>")
+                 await message.channel.send(f"⚠️ {ping_str} **Error:** Spotify link failed.\n`{success_msg}`")
         
         # YouTube Logic
         elif youtube:
