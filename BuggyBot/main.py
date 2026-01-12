@@ -417,9 +417,15 @@ def load_music_services():
         pass
     
     browser_path = os.path.join(BASE_DIR, 'browser.json')
-    try:
-        if os.path.exists(browser_path): ytmusic = YTMusic(browser_path)
-    except: pass
+    print(f"🔎 Looking for browser.json at: {browser_path}")
+    if os.path.exists(browser_path):
+        try:
+            ytmusic = YTMusic(browser_path)
+            print("✅ YouTube Music Service Loaded.")
+        except Exception as e:
+            print(f"❌ Failed to load YouTube Music: {e}")
+    else:
+        print("❌ browser.json not found.")
 
 async def process_spotify_link(url):
     if not spotify: return "Spotify service not loaded (Check ID/Secret)."
@@ -940,7 +946,7 @@ async def showsettings(interaction: discord.Interaction):
             elif k in ROLE_ID_KEYS: disp = f"<@&{v}>"
             elif k in ROLE_LISTS: disp = " ".join([f"<@&{x}>" for x in v]) if v else "None"
             text += f"**{k}**: {disp}\n"
-    await interaction.response.send_message(text[:2000]) # Safety limit
+    await interaction.response.send_message(text[:2000], allowed_mentions=discord.AllowedMentions.none()) # Added allowed_mentions=discord.AllowedMentions.none()
 
 @bot.tree.command(name="refreshyoutube", description="Admin: Starts the OAuth flow to renew YouTube license.")
 @app_commands.check(is_admin_check)
