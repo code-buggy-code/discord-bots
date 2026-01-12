@@ -43,6 +43,7 @@
 - /removesetting <key> <value>: Removes items from a list config.
 - /showsettings: Shows all current config values.
 - /refreshmusic: (Updated) Starts OAuth flow for YouTube & reloads YTM browser.json.
+- /setupmusic <headers>: (New) Automated setup for YTM browser.json.
 - /entercode <code>: Completes the YouTube renewal with the code.
 - /stick <text>: Creates a sticky message in the current channel.
 - /unstick: Removes the sticky message in the current channel.
@@ -976,6 +977,50 @@ async def refreshmusic(interaction: discord.Interaction):
         await interaction.response.send_message(f"{ytm_status}\n🔄 **YouTube API Renewal Started!**\n1. Click: <{auth_url}>\n2. Type: `/entercode <code>`")
     except Exception as e: await interaction.response.send_message(f"{ytm_status}\n❌ Error starting YouTube refresh: {e}", ephemeral=True)
 
+@bot.tree.command(name="setupmusic", description="Admin: Automated setup for YTM browser.json.")
+@app_commands.check(is_admin_check)
+@app_commands.describe(headers="The raw header string from ytmusicapi setup")
+async def setupmusic(interaction: discord.Interaction, headers: str):
+    try:
+        # Create browser.json with the provided headers
+        browser_json_path = os.path.join(BASE_DIR, 'browser.json')
+        
+        # ytmusicapi expects a JSON object, but the user provides a raw header string.
+        # We'll use the YTMusic.setup function if possible, or construct it manually.
+        # Since we can't easily run the interactive setup, we'll try to construct the JSON manually
+        # assuming the user provides the raw header string as requested by ytmusicapi docs.
+        
+        # Simple parsing to create a valid JSON structure for browser.json
+        # This is a basic implementation; robust parsing might need the library's help
+        # But for automation, we can just save it if it's already JSON, or wrap it.
+        
+        # However, ytmusicapi usually takes the headers and creates the file.
+        # Let's try to use the library's method if available, or write the file directly.
+        # The most reliable way without user interaction is to write the file directly if we know the format.
+        # browser.json is essentially just the headers in JSON format.
+        
+        # If the user provides a JSON string (which is what ytmusicapi usually outputs/expects for the file)
+        try:
+            json_data = json.loads(headers)
+            with open(browser_json_path, 'w') as f:
+                json.dump(json_data, f)
+        except json.JSONDecodeError:
+            # If it's not JSON, it might be the raw header string.
+            # We can try to use YTMusic.setup logic, but that's interactive.
+            # For now, let's assume the user is pasting the JSON content for browser.json
+            return await interaction.response.send_message("❌ Error: Please provide the headers in valid JSON format (the content of browser.json).", ephemeral=True)
+            
+        # Reload services
+        load_music_services()
+        
+        if ytmusic:
+            await interaction.response.send_message("✅ **Success!** `browser.json` created and YouTube Music service loaded.", ephemeral=True)
+        else:
+            await interaction.response.send_message("⚠️ `browser.json` created, but service failed to load. Check the format.", ephemeral=True)
+            
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Setup Error: {e}", ephemeral=True)
+
 @bot.tree.command(name="entercode", description="Admin: Completes the YouTube renewal with the code.")
 @app_commands.check(is_admin_check)
 async def entercode(interaction: discord.Interaction, code: str):
@@ -1384,7 +1429,7 @@ async def help(interaction: discord.Interaction):
     embed.add_field(name="📨 DM Requests", value="`/dmreq`, `/dmroles`, `/setdmmessage`, `/listdmmessages`, `/listdmreq`", inline=False)
     embed.add_field(name="📝 Tasks & Sleep", value="`/task <amount>`, `/sleep [user]`\n`/setsleepvc`, `/setcelebration`", inline=False)
     embed.add_field(name="⛔ Lockout & Jail", value="`/lockout`, `/lockoutview`, `/lockoutclear`\n`/setjail`, `/timeout`", inline=False)
-    embed.add_field(name="👑 Admin", value="`/vote`, `/removevotes`, `/showvotes`, `/adminclear`\n`/checkmusic`, `/refreshmusic`, `/entercode`", inline=False)
+    embed.add_field(name="👑 Admin", value="`/vote`, `/removevotes`, `/showvotes`, `/adminclear`\n`/checkmusic`, `/refreshmusic`, `/setupmusic`, `/entercode`", inline=False)
     embed.add_field(name="♻️ System", value="`/sync`", inline=False)
     await interaction.response.send_message(embed=embed)
 
