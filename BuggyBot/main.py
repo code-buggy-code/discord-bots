@@ -13,8 +13,9 @@
 - check_manager_logs(): Loop that checks for logs from other processes (IPC).
 - nightly_purge(): task that deletes messages in specific channels at 3 AM.
 - check_token_validity_task(): Daily task to verify YouTube license.
-- task_loop(): (New) Robust minute-by-minute timer for nightly tasks.
+- task_loop(): (New) Robust minute-by-minute timer for nightly tasks AND lockout checks.
 - handle_sleep_command(message, target_member): Moves users to Sleep VC.
+- is_time_in_range(start, end, current): Helper for lockout time checking.
 
 --- DATABASE HANDLER ---
 - load_config(): Gets bot config from JSON.
@@ -27,6 +28,9 @@
 - load_tasks(): Loads active task lists (BetterBuggy).
 - save_task(task_data): Saves/Updates a task list.
 - delete_task(message_id): Removes a completed task list.
+- get_user_lockout(user_id): Gets lockout data for a user (MamaBug).
+- save_user_lockout(user_id, data): Saves lockout data.
+- delete_user_lockout(user_id): Deletes lockout data.
 
 --- UI CLASSES ---
 - TaskView: Handles the Buttons (Done, Skip, Undo) for Task Lists.
@@ -55,16 +59,23 @@
 - /listdmmessages: Lists all current DM preset messages.
 - /dmreq <action> <channel>: Sets DM request channels.
 - /listdmreq: Lists DM request settings.
-- /setsleepvc <channel>: (New) Sets the Sleep Voice Channel.
-- /setcelebration <level> <msg>: (New) Sets task completion messages.
-- /sleep <target>: (New) Moves user to Sleep VC.
-- /task <amount>: (New) Starts a task list.
+- /setsleepvc <channel>: Sets the Sleep Voice Channel.
+- /setcelebration <level> <msg>: Sets task completion messages.
+- /sleep <target>: Moves user to Sleep VC.
+- /task <amount>: Starts a task list.
+- /setjail <channel>: (MamaBug) Sets the Jail VC.
+- /timeout <user> <minutes>: (MamaBug) Puts a user in timeout.
+- /lockout <start> <end> <repeat>: (MamaBug) User sets their own lockout.
+- /lockoutview: (MamaBug) User views their lockout.
+- /lockoutclear: (MamaBug) User clears their lockout.
+- /adminclear <user>: (MamaBug) Admin clears a user's lockout.
 - /help: Shows the help menu.
 
 --- EVENTS ---
-- on_ready: Startup sequence (Syncs Slash Commands & Restores Task Views).
-- on_raw_reaction_add: Handles ticket access and DM Request Logic.
+- on_ready: Startup sequence.
+- on_raw_reaction_add: Handles ticket access, DM Request Logic, and Manual Role Removal.
 - on_member_update: Handles auto-bans and ticket role assignment.
+- on_voice_state_update: Handles jail logic (MamaBug).
 - on_message: Handles Sticky, Music, Media Only, and DM Request logic.
 """
 
@@ -140,7 +151,13 @@ DEFAULT_CONFIG = {
         "2": "You're making progress!",           # 25-49%
         "3": "Almost there, doing great!",        # 50-74%
         "4": "AMAZING! You finished the list!"    # 75-100%
-    }
+    },
+
+    # --- MAMABUG FEATURES ---
+    "jail_vc_id": 0,
+    "lockout_target_role_id": 0, # The role to remove/add (e.g. NSFW role)
+    "time_zones": [], # List of {"guild_id": id, "role_id": id, "offset": int}
+    "active_timeouts": {} # {user_id: {"remaining_seconds": X, "last_check": timestamp}}
 }
 
 SIMPLE_SETTINGS = {
@@ -160,13 +177,15 @@ SIMPLE_SETTINGS = {
     "admin_role_id": list,
     "media_only_channels": list,
     "dm_req_channels": list,
-    "sleep_vc_id": int
+    "sleep_vc_id": int,
+    "jail_vc_id": int,
+    "lockout_target_role_id": int
 }
 
 CHANNEL_LISTS = ["nightly_channels", "link_safe_channels", "media_only_channels", "dm_req_channels"]
 ROLE_LISTS = ["admin_role_id"]
-CHANNEL_ID_KEYS = ["log_channel_id", "music_channel_id", "ticket_category_id", "sleep_vc_id"]
-ROLE_ID_KEYS = ["bad_role_to_ban_id", "ticket_access_role_id"]
+CHANNEL_ID_KEYS = ["log_channel_id", "music_channel_id", "ticket_category_id", "sleep_vc_id", "jail_vc_id"]
+ROLE_ID_KEYS = ["bad_role_to_ban_id", "ticket_access_role_id", "lockout_target_role_id"]
 
 config = DEFAULT_CONFIG.copy()
 db = None
@@ -190,7 +209,7 @@ class DatabaseHandler:
             with open(self.file_path, "r") as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {"bot_config": [], "sticky_messages": [], "votes": [], "tasks": []}
+            return {"bot_config": [], "sticky_messages": [], "votes": [], "tasks": [], "user_lockouts": []}
 
     def _save_to_file(self):
         with open(self.file_path, "w") as f:
@@ -287,6 +306,30 @@ class DatabaseHandler:
                 return doc
         return None
 
+    # --- LOCKOUT METHODS (MAMABUG) ---
+    async def get_user_lockout(self, user_id):
+        collection = self.data.get("user_lockouts", [])
+        for doc in collection:
+            if doc.get("_id") == user_id:
+                return doc
+        return None
+
+    async def save_user_lockout(self, user_id, data):
+        collection = self.data.get("user_lockouts", [])
+        # Remove existing
+        collection = [d for d in collection if d.get("_id") != user_id]
+        new_doc = {"_id": user_id}
+        new_doc.update(data)
+        collection.append(new_doc)
+        self.data["user_lockouts"] = collection
+        self._save_to_file()
+
+    async def delete_user_lockout(self, user_id):
+        collection = self.data.get("user_lockouts", [])
+        collection = [d for d in collection if d.get("_id") != user_id]
+        self.data["user_lockouts"] = collection
+        self._save_to_file()
+
 def clean_id(mention_str):
     return int(re.sub(r'[^0-9]', '', str(mention_str)))
 
@@ -304,6 +347,12 @@ async def load_initial_config():
     if "sleep_vc_id" not in config: config["sleep_vc_id"] = 0
     if "celebratory_messages" not in config: config["celebratory_messages"] = DEFAULT_CONFIG["celebratory_messages"]
 
+    # Ensure MamaBug settings exist
+    if "jail_vc_id" not in config: config["jail_vc_id"] = 0
+    if "lockout_target_role_id" not in config: config["lockout_target_role_id"] = 0
+    if "time_zones" not in config: config["time_zones"] = []
+    if "active_timeouts" not in config: config["active_timeouts"] = {}
+
     # Add message 5 if missing from old config
     if "5" not in config["dm_messages"]:
         config["dm_messages"]["5"] = DEFAULT_CONFIG["dm_messages"]["5"]
@@ -317,6 +366,18 @@ async def save_config_to_db():
 def is_admin_check(interaction: discord.Interaction) -> bool:
     if interaction.user.guild_permissions.administrator: return True
     return any(role.id in config['admin_role_id'] for role in interaction.user.roles)
+
+def is_time_in_range(start_str, end_str, current_dt):
+    current_time = current_dt.time()
+    try:
+        start_time = datetime.datetime.strptime(start_str, "%H:%M").time()
+        end_time = datetime.datetime.strptime(end_str, "%H:%M").time()
+        if start_time < end_time:
+            return start_time <= current_time <= end_time
+        else: 
+            return current_time >= start_time or current_time <= end_time
+    except:
+        return False
 
 # --- MUSIC SETUP ---
 async def load_youtube_service():
@@ -547,6 +608,49 @@ async def task_loop():
     if now.hour == 4 and now.minute == 0:
         await check_token_validity_task()
 
+    # --- MAMABUG LOCKOUT LOGIC ---
+    if not config.get('lockout_target_role_id'): return
+    target_role_id = config['lockout_target_role_id']
+    
+    # Iterate through users with lockouts
+    # Note: We can't iterate DB directly in loop, so we assume role-based checking from config['time_zones'] if used, 
+    # OR we iterate members in guild. For simplicity + optimization, we'll iterate guilds -> members.
+    
+    current_utc = datetime.datetime.now(datetime.timezone.utc)
+    
+    for guild in bot.guilds:
+        target_role = guild.get_role(target_role_id)
+        if not target_role: continue
+        
+        # NOTE: iterating all members every minute can be heavy for huge servers. 
+        # But for your personal bot usage, it's fine.
+        for member in guild.members:
+            if member.bot: continue
+            
+            user_data = await db.get_user_lockout(member.id)
+            if not user_data or 'start' not in user_data: continue
+            
+            # Determine local time for user (simplified: assume EST or use offset if you had it)
+            # Defaulting to EST for now as per your usual preference
+            local_time = datetime.datetime.now(EST_TZ)
+            
+            should_be_locked = is_time_in_range(user_data['start'], user_data['end'], local_time)
+            has_role = target_role in member.roles
+            was_locked_by_bot = user_data.get('locked_by_bot', False)
+
+            if should_be_locked and has_role:
+                try: 
+                    await member.remove_roles(target_role)
+                    await db.save_user_lockout(member.id, {"start": user_data['start'], "end": user_data['end'], "repeat": user_data['repeat'], "locked_by_bot": True})
+                    await send_log(f"🔒 **Lockout:** Removed role from {member.name}.")
+                except: pass
+            elif not should_be_locked and not has_role and was_locked_by_bot:
+                try: 
+                    await member.add_roles(target_role)
+                    await db.save_user_lockout(member.id, {"start": user_data['start'], "end": user_data['end'], "repeat": user_data['repeat'], "locked_by_bot": False})
+                    await send_log(f"🔓 **Lockout:** Restored role to {member.name}.")
+                except: pass
+
 @bot.event
 async def on_ready():
     global db, sticky_data, vote_data
@@ -587,7 +691,7 @@ async def on_ready():
     
     await load_youtube_service()
     load_music_services()
-    await send_log("Bot is online and ready (Slash Commands, Tasks, & Reliable Timer Active)!")
+    await send_log("Bot is online and ready (Slash Commands, Tasks, Jail & Lockout Active)!")
 
 # --- EVENTS ---
 @bot.event
@@ -670,6 +774,48 @@ async def on_member_update(before, after):
                 await send_log(f"✅ Ticket created for **{after.name}**.")
             except Exception as e: await send_log(f"❌ Failed to create ticket: {e}")
 
+# --- MAMABUG JAIL LOGIC ---
+@bot.event
+async def on_voice_state_update(member, before, after):
+    # Jail VC Check
+    jail_vc_id = config.get('jail_vc_id')
+    if not jail_vc_id: return
+
+    user_id = str(member.id)
+    active_timeouts = config.get('active_timeouts', {})
+    
+    if user_id not in active_timeouts: return
+
+    timeout_data = active_timeouts[user_id]
+    now = datetime.datetime.now().timestamp()
+
+    # Entering Jail VC
+    if after.channel and after.channel.id == jail_vc_id:
+        timeout_data["last_check"] = now
+        await save_config_to_db()
+    
+    # Leaving Jail VC
+    elif (not after.channel or after.channel.id != jail_vc_id) and before.channel and before.channel.id == jail_vc_id:
+        if timeout_data.get("last_check"):
+            diff = now - timeout_data["last_check"]
+            timeout_data["remaining_seconds"] = max(0, timeout_data["remaining_seconds"] - diff)
+            timeout_data["last_check"] = None
+            
+            # Check if sentence is over (unlikely on leave, but possible if they left right at 0)
+            if timeout_data["remaining_seconds"] <= 0:
+                target_role_id = config.get('lockout_target_role_id')
+                if target_role_id:
+                    role = member.guild.get_role(target_role_id)
+                    if role:
+                        try:
+                            await member.add_roles(role)
+                            del active_timeouts[user_id]
+                            await send_log(f"🔓 {member.mention} completed timeout and regained access!")
+                        except Exception as e:
+                            print(f"Failed to restore role: {e}")
+            
+            await save_config_to_db()
+
 # --- SLASH COMMANDS ---
 
 @bot.tree.command(name="sync", description="Admin: Pulls changes from GitHub and restarts.")
@@ -740,7 +886,7 @@ async def showsettings(interaction: discord.Interaction):
             elif k in ROLE_ID_KEYS: disp = f"<@&{v}>"
             elif k in ROLE_LISTS: disp = " ".join([f"<@&{x}>" for x in v]) if v else "None"
             text += f"**{k}**: {disp}\n"
-    await interaction.response.send_message(text)
+    await interaction.response.send_message(text[:2000]) # Safety limit
 
 @bot.tree.command(name="refreshyoutube", description="Admin: Starts the OAuth flow to renew YouTube license.")
 @app_commands.check(is_admin_check)
@@ -1065,6 +1211,92 @@ async def task(interaction: discord.Interaction, amount: int):
     view.message_id = msg.id
     await view.update_db()
 
+# --- MAMABUG COMMANDS ---
+
+@bot.tree.command(name="setjail", description="Admin: Sets the Jail Voice Channel.")
+@app_commands.check(is_admin_check)
+async def setjail(interaction: discord.Interaction, channel: discord.VoiceChannel):
+    config['jail_vc_id'] = channel.id
+    await save_config_to_db()
+    await interaction.response.send_message(f"✅ Jail VC set to {channel.name}.")
+
+@bot.tree.command(name="timeout", description="Admin: Puts a user in jail.")
+@app_commands.check(is_admin_check)
+@app_commands.describe(minutes="Duration in minutes")
+async def timeout(interaction: discord.Interaction, member: discord.Member, minutes: int):
+    if not config['jail_vc_id']:
+        return await interaction.response.send_message("❌ Jail VC not set. Use `/setjail`.", ephemeral=True)
+    
+    target_role_id = config.get('lockout_target_role_id')
+    if not target_role_id:
+        return await interaction.response.send_message("❌ Lockout Target Role not set (use `/setsetting lockout_target_role_id ...`).", ephemeral=True)
+
+    role = interaction.guild.get_role(target_role_id)
+    if not role: return await interaction.response.send_message("❌ Role not found.", ephemeral=True)
+
+    try:
+        await member.remove_roles(role)
+        
+        user_id = str(member.id)
+        active_timeouts = config.get('active_timeouts', {})
+        active_timeouts[user_id] = {
+            "remaining_seconds": minutes * 60,
+            "last_check": None
+        }
+        
+        # If in jail already, start timer
+        if member.voice and member.voice.channel and member.voice.channel.id == config['jail_vc_id']:
+            active_timeouts[user_id]["last_check"] = datetime.datetime.now().timestamp()
+            
+        config['active_timeouts'] = active_timeouts
+        await save_config_to_db()
+        
+        jail_channel = interaction.guild.get_channel(config['jail_vc_id'])
+        await interaction.response.send_message(f"𐂺 {member.mention} jailed for **{minutes} mins**. Stay in {jail_channel.mention} to unlock!")
+        
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+
+@bot.tree.command(name="lockout", description="User: Set your own role lockout time.")
+@app_commands.describe(start="HH:MM", end="HH:MM", repeat="daily/weekly")
+async def lockout(interaction: discord.Interaction, start: str, end: str, repeat: str):
+    try:
+        datetime.datetime.strptime(start, "%H:%M")
+        # Fix 4am bug logic from MamaBug
+        e_obj = datetime.datetime.strptime(end, "%H:%M")
+        if datetime.time(1, 0) <= e_obj.time() <= datetime.time(4, 0): end = "04:00"
+    except:
+        return await interaction.response.send_message("❌ Please use HH:MM format.", ephemeral=True)
+        
+    data = {"start": start, "end": end, "repeat": repeat.lower(), "locked_by_bot": False}
+    await db.save_user_lockout(interaction.user.id, data)
+    await interaction.response.send_message(f"✅ Lockout set for **{start}** to **{end}**!")
+
+@bot.tree.command(name="lockoutview", description="User: View your lockout settings.")
+async def lockoutview(interaction: discord.Interaction):
+    user_data = await db.get_user_lockout(interaction.user.id)
+    if not user_data or 'start' not in user_data:
+        return await interaction.response.send_message("❌ You don't have a lockout set.", ephemeral=True)
+    await interaction.response.send_message(f"📅 **Settings:**\nStart: {user_data['start']}\nEnd: {user_data['end']}\nRepeat: {user_data['repeat']}")
+
+@bot.tree.command(name="lockoutclear", description="User: Clear your lockout settings.")
+async def lockoutclear(interaction: discord.Interaction):
+    user_data = await db.get_user_lockout(interaction.user.id)
+    if not user_data: return await interaction.response.send_message("You don't have a lockout.", ephemeral=True)
+    
+    # Check if active
+    if 'start' in user_data and is_time_in_range(user_data['start'], user_data['end'], datetime.datetime.now()):
+         return await interaction.response.send_message("❌ You cannot clear your lockout while it is active!", ephemeral=True)
+         
+    await db.delete_user_lockout(interaction.user.id)
+    await interaction.response.send_message("🗑️ Lockout cleared.")
+
+@bot.tree.command(name="adminclear", description="Admin: Force clear a user's lockout.")
+@app_commands.check(is_admin_check)
+async def adminclear(interaction: discord.Interaction, target: discord.Member):
+    await db.delete_user_lockout(target.id)
+    await interaction.response.send_message(f"🧹 Cleared lockout for **{target.display_name}**.")
+
 @bot.tree.command(name="help", description="Shows the help menu.")
 async def help(interaction: discord.Interaction):
     embed = discord.Embed(title="BuggyBot Help", color=discord.Color.blue())
@@ -1074,7 +1306,8 @@ async def help(interaction: discord.Interaction):
     embed.add_field(name="📷 Media Only", value="`/mediaonly`, `/listmediaonly`", inline=False)
     embed.add_field(name="📨 DM Requests", value="`/dmreq`, `/dmroles`, `/setdmmessage`, `/listdmmessages`, `/listdmreq`", inline=False)
     embed.add_field(name="📝 Tasks & Sleep", value="`/task <amount>`, `/sleep [user]`\n`/setsleepvc`, `/setcelebration`", inline=False)
-    embed.add_field(name="👑 Admin", value="`/vote`, `/removevotes`, `/showvotes`\n`/checkyoutube`, `/refreshyoutube`, `/entercode`", inline=False)
+    embed.add_field(name="⛔ Lockout & Jail", value="`/lockout`, `/lockoutview`, `/lockoutclear`\n`/setjail`, `/timeout`", inline=False)
+    embed.add_field(name="👑 Admin", value="`/vote`, `/removevotes`, `/showvotes`, `/adminclear`\n`/checkyoutube`, `/refreshyoutube`, `/entercode`", inline=False)
     embed.add_field(name="♻️ System", value="`/sync`", inline=False)
     await interaction.response.send_message(embed=embed)
 
